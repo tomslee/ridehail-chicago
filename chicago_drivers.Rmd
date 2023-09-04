@@ -19,12 +19,15 @@ editor_options:
 librarian::shelf(tidyverse, ggplot2, knitr, reshape2, ggtext, jsonlite, stringr, lubridate, scales, ggthemes, RColorBrewer, viridis, vroom, janitor)
 
 knitr::opts_knit$set(echo = FALSE)
+#update_geom_defaults("point", aes(shape=21, fill="white", size=2, stroke=2, colour="Steel Blue"))
+update_geom_defaults("point", aes(shape=16, alpha=1.0, size=3))
+update_geom_defaults("line", aes(linewidth=1, alpha=1.0))
 ```
 
 ```{r, read-data, echo=FALSE}
 # The N_ columns are integer count of months from 2011-08.
 # csv_file="driver_sample.csv"
-# Reading and preparing the drivers CSV takes 20 -- 30 seconds
+# Reading and preparing the drivers CSV takes several minutes
 csv_file="./data/Transportation_Network_Providers_-_Drivers.csv"
 drivers <-vroom(csv_file, col_types=cols(
   MONTH_REPORTED=col_date(format="%Y-%m"),
@@ -88,7 +91,7 @@ p <- ggplot(data= tb %>%
             aes(x=month_reported, y=value, colour=measure))
 p + 
   #facet_wrap(vars(measure), scales="free") +
-  geom_point(size=2) +
+  geom_point() +
   labs(title="TNC trips per month in Chicago",
          x="Year",
          y="Trips per month") + 
@@ -147,7 +150,7 @@ tb <- active_drivers %>%
 p <- ggplot(data=tb %>% filter(month_reported > as.Date("2016-12-30")),
             aes(x=month_reported, y=drivers, colour=dummy))
 p + 
-  geom_point(size=2) +
+  geom_point() +
   labs(title="TNC active drivers in Chicago",
        subtitle="Active drivers are those who drive at least one trip in the month",
        x="Date",
@@ -271,7 +274,7 @@ the number of part-time (160-240) and full-time drivers rose. Since
 then, the composition has changed only a little.
 
 
-```{r category-coarse, echo=FALSE}
+```{r category-coarse, echo=FALSE, message=FALSE}
 category <- driver_category_coarse_v
 
 tb <- active_drivers %>% 
@@ -286,37 +289,40 @@ tb <- active_drivers %>%
   pivot_longer(cols=c(driver_percent, trip_percent),
                names_to="measure",
                values_to="value") %>%
-  arrange(month_reported, driver_category)
+  mutate(measure=as.factor(measure)) %>%
+  mutate(measure=factor(measure, levels=rev(levels(measure)))) %>%
+  arrange(month_reported, driver_category) 
 
-# p <- ggplot(data=driver_categories, 
-#            mapping=aes(x=driver_category, y=driver_percent, fill=factor(month_reported)))
+labels = c("% of trips by full-time drivers", "% of drivers who are full time")
 
- p <- ggplot(data=tb, 
-            mapping=aes(x=month_reported, y=value, 
-                        fill=driver_category,
-                        label=measure))
- 
+p <- ggplot(data=tb %>% filter(driver_category=="Full time"), 
+            mapping=aes(x=month_reported, 
+                        y=value, 
+                        label=measure,
+                        color=measure))
+
 p + 
-  facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
-  # geom_line(size=1) +
-  geom_area(alpha=0.7) + 
-  # geom_point(size=3) +
-  labs(title="Chicago ridehail driver hours-of-work categories",
-       subtitle=sprintf("Full timers (over %s trips per month) make up a small proportion of all drivers,\nbut deliver a larger proportion of trips", full_time_trips),
-       x="Month",
+  # facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
+  geom_line(linewidth=1) +
+  geom_point(size=1) +
+  geom_smooth(method = "lm") +
+  labs(title="Full-time ridehail drivers in Chicago",
+       subtitle=sprintf("Full timers (over %s trips per month) are a small fraction of drivers, but drive about half of all trips.\nThe importance of full-time drivers has been slowly growing over time.", full_time_trips),
+       x="Date",
        y="Percent",
        colour="Driver category") +
-  scale_y_continuous(breaks=waiver(), n.breaks=6) +
-  theme(legend.position="top") +
-  # theme(panel.grid.major=element_line(colour="grey")) +
-  guides(fill=guide_legend(title="Driver category")) +
-  scale_fill_tableau(palette="Tableau 10") 
+  scale_y_continuous(limits=c(0, 60), breaks=waiver(), n.breaks=6) +
+  theme(legend.title=element_blank(), legend.position=c(0.15, 0.92), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  guides(colour=guide_legend(title="Measure", override.aes = list(size = 3,fill=NA))) +
+  scale_colour_tableau(palette="Tableau 10", labels=labels)
 ```
 
 Here are the values for the most recent month:
 
 ```{r full-time-this-month}
-tb %>% filter(month_reported==max(month_reported))
+tb %>% filter(month_reported==max(month_reported), driver_category=="Full time")
 ```
 
 **Discussion**
@@ -347,14 +353,14 @@ tb <- active_drivers %>%
 
 p <- ggplot(data=tb, aes(x=month_reported, y=trips, colour=average))
 p + 
-  geom_point(size=2) +
+  geom_point() +
+  geom_smooth(method = "lm") +
   labs(title="Average trips per active driver", 
         subtitle="Showing both mean and median number of trips",
         x="Date",
         y="Trips/month") +
   scale_x_date(date_labels="%b %Y") +
   scale_y_continuous(limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
-  theme(legend.position="top") +
   scale_color_tableau(palette="Tableau 10")
 ```
 
@@ -366,7 +372,7 @@ The first chart takes a specific month and shows the distribution of
 drivers, by longevity, on the platform in that month.
 
 ```{r driver-longevity, echo=FALSE}
-reference_month = as.Date("2023-02-01")
+reference_month = as.Date("2023-05-01")
 
 tb <- active_drivers %>% 
   select(c(month_reported, driver_longevity)) %>%
@@ -387,7 +393,7 @@ median_start <- active_drivers %>%
 
 p <- ggplot(data=tb, aes(x=driver_longevity, y=Drivers, colour=dummy))
 
-p + geom_point(size=2) +
+p + geom_point() +
   labs(title=sprintf("Longevity of active drivers reported in %s", reference_month),
        subtitle=sprintf("Mean start time=%s; mean longevity=%s months; median longevity=%s months", 
                         mean_start$start[1], 
@@ -421,34 +427,36 @@ measure_label <- c(
 
 tb <- active_drivers %>% 
   select(c(month_reported, driver_longevity, number_of_trips)) %>%
-  #filter(month_reported %in% test_months,
-  #       driver_longevity > 0) %>%
   mutate(driver_category = category(driver_longevity)) %>%
   group_by(month_reported, driver_category) %>%
   summarise(drivers=n(), trips=sum(number_of_trips)) %>%
   mutate(driver_percent=proportions(drivers) * 100,
          trip_percent=proportions(trips) * 100) %>%
   ungroup %>%
+  filter(driver_category=="A year or less") %>%
   pivot_longer(cols=c(driver_percent, trip_percent),
                names_to="measure",
                values_to="value")
 
-p <- ggplot(data=tb, aes(x=month_reported, y=value, colour=driver_category, label=measure))
+labels = c("% of trips by drivers with a year or less of experience", "% of drivers with a year or less of experience")
+
+p <- ggplot(data=tb, aes(x=month_reported, y=value, colour=measure, label=measure))
 
 p + 
-  facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
-  #geom_point(size=2) +
-  geom_line(size=1) +
-  labs(title="Chicago ride hail driver longevity categories",
-       subtitle="Drivers with a year or less on the platform still make up a large proportion of drivers\n and provide a large proportion of trips", 
+  # facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
+  geom_point() +
+  geom_smooth(method="loess") +
+  labs(title="New drivers in Chicago",
+       subtitle="Drivers with a year or less on the platform still make up over half of all drivers\n and provide over half of all trips.", 
        caption="Ride hailing was still new and fast-growing in 2016, so there were few long-term drivers.\nSince then, the churn of incoming and leaving drivers has evened out.",
        x="Time",
-       y="Percent",
-       colour="Driver longevity") +
-  scale_y_continuous(breaks=waiver(), n.breaks=6) +
-  theme(legend.position="top") +
-  guides(fill=guide_legend(title="Driver category")) +
-  scale_color_tableau(palette="Tableau 10")
+       y="Percent") +
+  scale_y_continuous(breaks=waiver(), n.breaks=6, limits=c(0, NA)) +
+  theme(legend.title=element_blank(), legend.position=c(0.3, 0.15), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  guides(fill=guide_legend(title=)) +
+  scale_color_tableau(palette="Tableau 10", labels=labels)
 ```
 
 Both mean and median longevity (below) confirm the observation that the driver population
@@ -475,7 +483,7 @@ p <- ggplot(data=tb,
             aes(x=month_reported, y=mean_longevity, 
                 colour=dummy))
 
-p + geom_point(size=2) +
+p + geom_point() +
   #geom_smooth() +
   labs(title="Chicago active driver mean longevity",
        x = "Date",
@@ -497,7 +505,9 @@ tb <- active_drivers %>%
 p <- ggplot(data=tb,
             aes(x=month_reported, y=median_longevity, colour=dummy))
 
-p + geom_point(size=2) +
+p + 
+  geom_point() +
+  geom_smooth(method="loess", se=FALSE) +
   labs(title="Median active driver longevity over time",
        x="Time",
        y="Median active driver longevity (months)") +
@@ -530,7 +540,7 @@ mean_expiry_month <- drivers %>%
 p <- ggplot(data=tb, aes(x=month_reported, y=drivers, colour=dummy))
 
 p + 
-  geom_point(size=2) +
+  geom_point() +
   geom_smooth(method="gam", se=TRUE) +
   labs(title=sprintf("Active drivers starting in %s, still on the platform at a later time", reference_month),
        subtitle=sprintf("Mean time on platform = %s days", round(mean_expiry_month-reference_month)),
@@ -541,14 +551,16 @@ p +
 ```
 
 
-Now see if we can say "how many quit over their first year"
+Now see if we can say "how many quit over their first year".
+
+**Note: I do not trust this graph**
 
 ```{r driver-churn-facet, echo=FALSE}
 # Cannot compute this for dates less than a year old
 tb <- active_drivers %>% 
   filter(
     driver_start_month > as.Date("2016-01-01"),
-    driver_start_month <= as.Date("2022-02-01"),
+    driver_start_month <= as.Date("2022-06-01"),
     month_reported == driver_start_month + months(1) |
     month_reported == driver_start_month + years(1)) %>%
   group_by(driver_start_month, month_reported) %>%
@@ -556,9 +568,9 @@ tb <- active_drivers %>%
             trips=sum(number_of_trips)) %>%
   ungroup() %>%
   arrange(driver_start_month, month_reported) %>%
-  mutate(driver_survival = drivers / lag(drivers),
-         trip_survival = trips / lag(trips)) %>%
-  filter(driver_survival < 1 & trip_survival < 1) %>%
+  mutate(driver_survival = 100.0 * drivers / lag(drivers),
+         trip_survival = 100.0 * trips / lag(trips)) %>%
+  filter(driver_survival < 100 & trip_survival < 100) %>%
   pivot_longer(cols=c("driver_survival", "trip_survival"), names_to="measure", values_to="value")
 
 measure_label <- c(
@@ -571,13 +583,13 @@ p <- ggplot(data=tb, aes(x=driver_start_month, y=value, colour=measure, label=me
 p + 
   facet_wrap(~measure, scale="free", labeller=labeller(measure=measure_label)) +
   ylim(0, NA) +
-  geom_point(size=2) +
+  geom_point() +
   # geom_smooth(method="gam", se=TRUE) +
-  labs(title="Chicago ridehail driver churn",
-    subtitle="Fraction of drivers still active after a year, and fraction of trips provided by those drivers",
+  labs(title="Chicago ridehail driver churn (I do not trust this graph)",
+    subtitle="Percent of drivers still active after a year, and of trips provided by those drivers",
     caption="Over two-thirds of drivers quit within a year. Over half of all trips are provided by drivers who last less than a year.",
     x="Date",
-    y="Fraction",
+    y="Percent",
     colour="Quantity") +
   theme(legend.position = "none") +
   scale_colour_tableau(palette="Tableau 10")
@@ -610,7 +622,7 @@ tb <- active_drivers %>%
 
 p <- ggplot(data=tb,
             aes(x=driver_longevity, y=trip_fraction, colour=factor_month_reported))
-p + geom_point(size=1, alpha=0.8) +
+p + geom_point() +
   ggtitle("The evolution of active driver longevity") +
   scale_x_continuous("Active driver longevity (months)", limits=c(0,24), labels=label_number(scale_cut=cut_short_scale())) +
   scale_y_continuous("Trip Fraction", labels=label_number(scale_cut=cut_short_scale())) +
@@ -627,25 +639,28 @@ tb <- active_drivers %>%
   filter(!is.na(driver_start_month), driver_longevity>0) %>% 
   select(c(driver_longevity, number_of_trips)) %>% 
   group_by(driver_longevity) %>% 
-  summarise(trips=sum(number_of_trips))
+  summarise(trips=sum(number_of_trips)) %>%
+  ungroup() %>%
+  mutate(dummy="x")
 
 mean_longevity <- tb %>% 
   summarise(mean=sum(driver_longevity * trips)/sum(trips)) %>% 
   pull(var=mean)
 
 p <- ggplot(data=tb,
-            aes(x=driver_longevity, y=trips))
+            aes(x=driver_longevity, y=trips, colour=dummy))
 
 p + 
-  geom_point(size=2, colour="steelblue") +
-  geom_line(linetype="dashed", colour="steelblue") +
+  geom_point() +
+  geom_line(linetype="dashed") +
   ggtitle("Number of trips, by active driver longevity",
           subtitle=sprintf("Mean longevity = %s months", round(mean_longevity))) +
   xlab("Active driver longevity on platform (months)") +
   ylab("Trips") +
   scale_y_continuous(labels=label_number(scale_cut=cut_short_scale())) +
   geom_vline(xintercept = mean_longevity, linetype="dashed", 
-                color = "steelblue", alpha=0.6, size=0.5) +
+                color = "steelblue", alpha=0.6, size=1) +
+  theme(legend.position = "none") +
   scale_colour_tableau()
 ```
 
@@ -662,14 +677,17 @@ tb_starts <- active_drivers %>%
   select(c(driver_start_month)) %>% 
   group_by(driver_start_month) %>% 
   summarise(starts=n())%>%
-  arrange(driver_start_month)
+  arrange(driver_start_month) %>%
+  ungroup() %>%
+  mutate(dummy="x")
 
 p <- ggplot(data=tb_starts,
-            aes(x=driver_start_month, y=starts))
-p + geom_point(size=2, colour="steelblue") +
+            aes(x=driver_start_month, y=starts, colour=dummy))
+p + geom_point() +
   ggtitle("Number of drivers starting each month") +
   xlab("Month") +
   scale_y_continuous("Drivers starting", labels=label_number(scale_cut=cut_short_scale())) +
+  theme(legend.position = "none") +
   scale_colour_tableau()
 ```
 
@@ -690,7 +708,7 @@ tb_long <- tb %>%
 
 p <- ggplot(data=tb_long, aes(x=month_reported, y=value, colour=category))
 p + 
-  geom_point(size=2) +
+  geom_point() +
   xlab("Month") +
   scale_y_continuous("Drivers starting or quitting", limits=c(-1000, 10000), labels=label_number(scale_cut=cut_short_scale())) +
   # scale_colour_brewer(palette = "Dark2") +

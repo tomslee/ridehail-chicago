@@ -19,7 +19,7 @@ librarian::shelf(tidyverse, knitr, lubridate, ggplot2,
 knitr::opts_knit$set(echo = FALSE)
 ```
 
-```{r echo=FALSE}
+```{r eval=FALSE, echo=FALSE}
 # These values created 2022-06-03, key DriverProfile at https://data.cityofchicago.org/profile/edit/developer_settings
 # api_key and api_key_secret apparently not used. Just the APP_TOKEN, but I'll keep them anyway
 API_KEY_ID="blfvqesfen0k6tb0a2tm4uip1"
@@ -35,17 +35,17 @@ res <- GET(TNC_TRIPS_ENDPOINT_2023, add_headers(app_token=APP_TOKEN))
 data = fromJSON(rawToChar(res$content))
 names(data)
 ```
-```{r echo=FALSE}
+```{r eval=FALSE, echo=FALSE}
 # w <- URLencode("trip_start_timestamp between '2019-10-01T0:00:00' and '2019-10-02T0:00:00'")
 # w <- URLencode("trip_start_timestamp between '2022-12-01T00:00:00.000' and '2023-03-01T00:00:00.000'")
-w <- URLencode("trip_start_timestamp between '2023-01-01T00:00:00.000' and '2023-03-01T00:00:00.000'")
+w <- URLencode("trip_start_timestamp between '2023-07-01T00:00:00.000' and '2023-08-01T00:00:00.000'")
 url <- sprintf("%s?$where=%s&$order=trip_start_timestamp", TNC_TRIPS_ENDPOINT_2023, w)
 res <- GET(url, add_headers(app_token=APP_TOKEN))
 data <- fromJSON(rawToChar(res$content))
 data
 ```
 
-# Average trip statistics
+# Update the trip data with recent values
 
 Using the first Thursday of each month, incrementally download data for select months and years. Save this and concatenate it with the trip_aggregates.csv file.
 
@@ -66,7 +66,7 @@ tb <- tibble(
 # for (year in c(2019, 2020, 2021, 2022)) {
 #  for (month in c(1:12)){
  for (year in c(2023)) {
-  for (month in c(01, 02)){
+  for (month in c(07)){
     first_seven_dates <- seq(ymd(sprintf("%s-%s-01", year, month)),ymd(sprintf("%s-%s-07", year, month)),by="1 day")
     first_thursday <- first_seven_dates[wday(first_seven_dates, label=TRUE) == "Thu"]
     test_date <- format(first_thursday, "%Y-%m-%d")
@@ -113,17 +113,68 @@ tb %>% write_csv('./data/trip_aggregates_new.csv', append=FALSE)
 ```
 
 
-```{r plot-chicago-trip-monthly-averages, echo=FALSE}
+```{r echo=FALSE}
+# Get the trip data into a tibble, called trips
 trips <- read_csv("./data/trip_aggregates.csv", col_types="iiidddd") %>%
   mutate(date=as.Date(sprintf("%s-%s-01", year, month))) %>% 
   pivot_longer(c(trip_count, fare_per_minute, trip_total_per_minute,
                  fare_per_mile, miles_per_hour, minutes, miles),
                names_to="category", values_to="measure"
-               )
-
-tb <- trips %>%
+               ) %>%
   filter(date > as.Date("2018-12-30"))
+```
 
+# Total number of trips
+
+```{r echo=FALSE}
+tb <- trips %>%
+  filter(date > as.Date("2017-12-30"),
+         category == "trip_count")
+
+p <- ggplot(data=tb,
+            mapping=aes(x=date, y=measure, colour=category, fill=category))
+
+p +
+  geom_line(linewidth=1.5, colour="steelblue") +
+  geom_point(shape=21, fill="white", colour="steelblue", size=3, stroke=2) +
+  theme(legend.position="none") +
+  scale_y_continuous("", limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
+  ggtitle("Ridehail trips in Chicago", 
+          subtitle="One point per month, representing the first Thursday of the month") +
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+# Trip durations
+
+```{r plot-chicago-trip-monthly-averages-drilldown, echo=FALSE}
+tb <- trips %>%
+  filter(date > as.Date("2018-12-30")) %>%
+  filter(category=="minutes")
+
+p <- ggplot(data=tb, # %>% filter(category %in% c("FarePerMinute", "TripTotalPerMinute")),
+            mapping=aes(x=date, y=measure))
+
+p +
+  #facet_wrap(vars(category),
+  #           scales = "free_y") +
+  geom_line(linewidth=1.5, colour="steelblue") +
+  geom_point(shape=21, fill="white", colour="steelblue", size=3, stroke=2) +
+ # geom_line(colour="forestgreen", alpha=0.6) +
+  theme(legend.position="none") +
+  scale_y_continuous("", limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
+   ggtitle("Chicago ridehail aggregates: mean trip duration (minutes)", 
+          subtitle="One point per month, representing the first Thursday of the month")+
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+# Trip durations and distances
+
+With miles, minutes, amd miles per hour we should have a good overall view of fare duration and length.
+
+```{r echo=FALSE}
+tb <- trips %>%
+    filter(category %in% c("minutes", "miles", "miles_per_hour"))
+ 
 p <- ggplot(data=tb, # %>% filter(category %in% c("FarePerMinute", "TripTotalPerMinute")),
             mapping=aes(x=date, y=measure, colour=category, fill=category))
 
@@ -139,38 +190,38 @@ p +
   scale_colour_tableau(palette="Tableau 10")
 ```
 
-```{r plot-chicago-trip-monthly-averages-drilldown, echo=FALSE}
-trips <- read_csv("./data/trip_aggregates.csv", col_types="iiidddd") %>%
-  mutate(date=as.Date(sprintf("%s-%s-01", year, month))) %>% 
-  pivot_longer(c(trip_count, fare_per_minute, trip_total_per_minute,
-                 fare_per_mile, miles_per_hour, minutes, miles),
-               names_to="category", values_to="measure"
-               )
+# Trip fares
 
+Fare per mile, fare per minute, and minutes per fare. With these three we should have a basic overall-fare-per-minute metric (or, equivalently, overall-fare-per-mile).
+
+Next step - calculate that.
+
+
+```{r plot-chicago-trip-monthly-averages, echo=FALSE}
 tb <- trips %>%
-  filter(date > as.Date("2018-12-30")) %>%
-  filter(category=="minutes")
-
-p <- ggplot(data=tb, # %>% filter(category %in% c("FarePerMinute", "TripTotalPerMinute")),
-            mapping=aes(x=date, y=measure))
+  filter(category %in% c("fare_per_minute", "fare_per_mile", "trip_total_per_minute"))
+         
+p <- ggplot(data=tb,
+            mapping=aes(x=date, y=measure, colour=category, fill=category))
 
 p +
-  #facet_wrap(vars(category),
-  #           scales = "free_y") +
-  geom_point(colour="steelblue", size=2) +
- # geom_line(colour="forestgreen", alpha=0.6) +
+  facet_wrap(vars(category),
+             scales = "free_y") +
+  # geom_point() +
+  geom_line(linewidth=1) +
   theme(legend.position="none") +
   scale_y_continuous("", limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
-   ggtitle("Chicago ridehail aggregates: mean trip duration (minutes)", 
-          subtitle="One point per month, representing the first Thursday of the month")+
+  ggtitle("Chicago ridehail aggregates", 
+          subtitle="One point per month, representing the first Thursday of the month") +
   scale_colour_tableau(palette="Tableau 10")
 ```
 
 
-
-## Fares and gasoline prices
+# Fares and gasoline prices
 
 The US Energy Information Administration publishes gasoline prices in cities, including Chicago. Here is a chart, downloaded from its open data site [here](https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=pet&s=emm_epmrr_pte_yord_dpg&f=w).
+
+(To download, go to the site and click "Download Data (xls file)")
 
 ```{r chicago-gas, echo=FALSE}
 # Read the gas data from the spreadsheet, and then calculate average monthly prices
@@ -182,7 +233,7 @@ gas <- read_xls("./data/EMM_EPMRR_PTE_YORD_DPGw.xls",
   group_by(month=lubridate::floor_date(date, "month")) %>% 
   summarise(price=mean(price)) %>%
   filter(month >= as.Date("2019-01-01"),
-         month < as.Date("2023-03-01")) %>%
+         month < as.Date("2023-08-01")) %>%
   ungroup() %>%
   mutate(month=as.Date(month)) %>%
   mutate(category="gas_price") %>%
@@ -198,16 +249,16 @@ tb <- trips %>%
 p <- ggplot(tb, map=aes(x=month, y=measure, colour=category))
 
 p +
-  geom_point(size=2) +
-  geom_line(linewidth=1) +
+  geom_line(linewidth=1.5) +
+  geom_point(shape=21, fill="white", size=3, stroke=2) +
   labs(x="Date",
        y="Price") +
   scale_x_date(date_breaks="6 month", date_labels="%b %Y") +
   scale_y_continuous(limits=c(0, NA)) +
-  scale_colour_discrete(labels=c("Gas price ($/gal)", "Trip total fare ($/min)")) +
   theme (legend.position=c(0.2, 0.8), 
         legend.title=element_blank()) +
-  scale_colour_tableau(palette="Tableau 10")
+  scale_colour_tableau(palette="Tableau 10",
+                       labels=c("Gas price ($/gal)", "Trip total fare ($/min)"))
 ```
 
 # Hourly trends during the day
@@ -287,11 +338,11 @@ p <- ggplot(data=tb, mapping=aes(x=hour, y=measure, colour=year, fill=year, labe
 
 p +
   # facet_wrap(vars(category), scales = "free_y") +
-  geom_point(size=2) +
-  geom_line(linewidth=1) +
+  geom_line(linewidth=1.5) +
+  geom_point(shape=21, fill="white", size=3, stroke=2) +
   # theme(legend.position="none") +
   scale_y_continuous(labels=label_number(scale_cut=cut_short_scale())) +
-  labs(title=sprintf("Chicago ridehail: trip distribution on the first Thursday in February", test_date),
+  labs(title=sprintf("Chicago ridehail: trip distribution on the first Thursday in February"),
        subtitle="One point per hour",
        x="Hour of the day",
        y="Number of trips") +
