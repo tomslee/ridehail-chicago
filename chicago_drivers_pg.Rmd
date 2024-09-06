@@ -1,0 +1,749 @@
+---
+title: "Chicago Ridehail Open Data: Drivers"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+  number_sections: true
+  df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+# install.packages("librarian")
+librarian::shelf(tidyverse, ggplot2, knitr, reshape2, ggtext, 
+                 jsonlite, stringr, lubridate, scales, 
+                 ggthemes, RColorBrewer, viridis, vroom,
+                 janitor, RPostgres
+                 )
+
+knitr::opts_knit$set(echo = FALSE)
+#update_geom_defaults("point", aes(shape=21, fill="white", size=2, stroke=2, colour="Steel Blue"))
+update_geom_defaults("point", aes(shape=16, alpha=1.0, size=3, colour="Steel Blue"))
+update_geom_defaults("line", aes(linewidth=1, alpha=1.0))
+update_geom_defaults("bar", aes(shape=16, alpha=1.0, size=3, fill="Steel Blue"))
+```
+
+# Experiment
+
+Can we connect to postgresql?
+
+```{r postgresql, echo=FALSE}
+# AWS
+con <- dbConnect(RPostgres::Postgres(),
+                    host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
+                    port=5432,
+                    dbname="postgres",
+                    user="rhreader",
+                    password="BETALMOrAShU")
+```
+
+
+# Data source
+
+Chicago publishes three data sets about Transportation Network Providers operations in the city. This notebook uses the [Drivers](https://data.cityofchicago.org/Transportation/Transportation-Network-Providers-Drivers/j6wf-834c) data set. All three are updated monthly. I download the Drivers set as a CSV file; the Trips data set is too big for that, and (in other notebooks) I query it from the notebook.
+
+After download, remove  some obvious gaps and errors (like drivers with a start date before 2011, or drivers with a start date after the month reported). 
+
+
+In this notebook, "drivers" = "active drivers", which is to say drivers with a number of trips > 0 in a given month. 
+
+# Aggregate drivers and trips
+
+## Trips per month
+
+Start with an overview of trip volume over time. 
+
+```{r trips-per-month-sql, echo=FALSE}
+sql <- {"SELECT month_reported, 
+        sum(number_of_trips) as trips, 
+        count(*) as drivers,
+        avg(number_of_trips) as mean_trips_per_driver
+    from drivers 
+  where number_of_trips > 0
+  group by month_reported
+  order by month_reported"}
+rs <- dbSendQuery(con,sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1)) 
+# %>% pivot_longer(cols=c(trips, drivers, mean_trips_per_driver), 
+      #         names_to="measure", values_to="value",
+       #        values_transform = list(value = as.double))
+tb <- tb_sql %>% select(c(month_reported, trips))
+
+p <- ggplot(data= tb %>% 
+              filter(month_reported > as.Date("2016-12-30")), 
+            aes(x=month_reported, y=trips))
+p + 
+  #facet_wrap(vars(measure), scales="free") +
+  geom_point() +
+  labs(title="TNC trips per month in Chicago",
+         x="Year",
+         y="Trips per month") + 
+  scale_y_continuous(limits=c(0, NA), 
+                     labels=label_number(scale_cut=cut_short_scale())) +
+  theme(legend.position="none") +
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+**Discussion**
+
+There are three periods:
+
+1. Expansion until about 9M trips per month at the beginning of 2018
+2. Flatlining at 9M trips per day during 2018 and 2019
+3. Covid-driven collapse in early 2020 followed by steady recovery during
+2021, so in mid-2022 the number of trips is back to about 2/3 of pre-Covid levels.
+
+For comparison with other cities, 9M trips per month is equivalent to:
+- 300,000 per day, or
+- 12000 per hour, or
+- 200 per minute.
+
+## Driver population
+
+The trend for active drivers parallels that for trips.
+
+The trends for all drivers (including those with no trips) have some similarities and differences to the trips:
+
+1. Expansion until early 2017. 
+2. During the first half of 2017 the number of drivers falls off and levels out at about 70K. This is while the number
+of trips is still increasing.
+3. Flatlining during 2017-H2, 2018, 2019.
+3. A slower and less complete Covid-driven drop-off of drivers during 2020 than trips, followed by some recovery during 2021.
+
+Trips and drivers are now back to about 0.6 of the pre-Covid numbers.
+
+Regarding the outliers in Q2 2018, there is a note on the City of
+Chicago web site:
+
+> [S]ome vehicle records for Q2 2018 (April-June) were reported for the
+> quarter as a whole, rather than for individual months. For purposes of
+> this dataset, those records have been assigned to 2018-06 (June).
+> Therefore, some caution in interpreting this month and the quarter as
+> a whole is advised.
+
+```{r drivers_sql, echo=FALSE}
+tb <- tb_sql %>% select(c(month_reported, drivers))
+
+p <- ggplot(data=tb %>% filter(month_reported > as.Date("2016-12-30")),
+            aes(x=month_reported, y=drivers))
+p + 
+  geom_point() +
+  labs(title="TNC active drivers in Chicago",
+       subtitle="Active drivers are those who drive at least one trip in the month",
+       x="Date",
+       y="Active drivers") +
+  scale_x_date(date_breaks = "1 year", date_labels = "%b %Y") +
+  scale_y_continuous(limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
+  theme(legend.position="none") +
+  scale_color_tableau(palette="Tableau 10")
+```
+
+**Discussion**
+
+The basic pattern is the same as that for trips. The Covid plummet is a bit less complete, although still dramatic.
+
+## Trips per driver
+
+The number of monthly trips per active driver in Chicago is consistently around 130 to 140. The number of trips peaked at about 300,000 per day pre-pandemic and is now more like 240,000 per day.
+
+For comparison, Toronto touched almost 200,000 trips per day pre-pandemic (Feb 6, 2020), so let's say it is back to 160,000 trips per day now, or about 4,800,000 per month (if that 160,000 is a typical day). As of October 2023 there are [52,000 licenses](https://www.cbc.ca/news/canada/toronto/ride-share-licenses-cap-toronto-city-council-1.6993607) in Toronto, a number that the City temporarily capped. If these drivers were all active then that would be 92 trips per driver. If Toronto had the same number of trips per driver as Chicago, it would have about 36,000 active drivers, or about 70% of licenses taking one trip per month.
+
+```{r, drivers-per-trip, echo=FALSE}
+tb <- tb_sql %>% select(c(month_reported, mean_trips_per_driver))
+
+p <- ggplot(data= tb %>% 
+              filter(month_reported > as.Date("2016-12-30")), 
+            aes(x=month_reported, y=mean_trips_per_driver))
+p + 
+  #facet_wrap(vars(measure), scales="free") +
+  geom_point() +
+  labs(title="TNC monthly trips per active driver in Chicago",
+         x="Date",
+         y="Trips per active driver") + 
+  scale_x_date(date_breaks = "1 year", date_labels = "%b %Y") +
+  scale_y_continuous(limits=c(0, NA), 
+                     labels=label_number(scale_cut=cut_short_scale())) +
+  theme(legend.position="none") +
+  scale_colour_tableau(palette="Tableau 10")  
+```
+
+# More about drivers
+
+## Drivers, by hours driven
+
+There is no one Uber driver. To understand how Uber operates, it helps to know what the range of driver participation is. Some drive only occasionally, some drive full time.
+
+```{r, driver-distribution, echo=FALSE}
+selected_month <- as.Date("2024-07-01")
+sql <- {"select number_of_trips
+         from drivers
+         where month_reported = $1
+         and number_of_trips > 0
+  "}
+rs <- dbSendQuery(con, sql)
+dbBind(rs, list(selected_month))
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+p <- ggplot(data=tb_sql, 
+            mapping=aes(x=number_of_trips)) 
+
+p + 
+  geom_histogram(alpha=0.6, binwidth = 50, position=position_nudge(25), colour="white") +
+  labs(title=sprintf("Distribution of drivers, by number of trips in the month, for %s", selected_month),
+        subtitle="The large number of inactive drivers with no trips at all are not shown.",
+       x="Trips",
+       y="Drivers") +
+  theme(legend.position="none") +
+  scale_fill_tableau(palette="Tableau 10")
+```
+
+## Categorizing drivers
+
+The Chicago data set does not provide driver times on the platform. The nearest we get is the number
+of trips in the month.
+
+Using an average of 20 minutes per trip (from the Trips data set) and a utilization rate of 66% (a generous estimate from Fehr & Peers) gives two trips per hour. A 30 hour week translates into 60 trips, which is about 250 trips per month. 
+
+Any attempt to divide the distribution into categories is a bit arbitrary, but this section shows a few categorization schemes.
+
+
+```{r, driver-categories, echo=FALSE}
+driver_category_seattle <- function(trips){
+  if (trips <= 40) {
+    return("Casual")
+  } else if (between(trips, 41, 160)) {
+    return("Committed casual") 
+  } else if(between(trips, 161, 240)) {
+    return("Part-time")
+  } else if (trips > 240) {
+    return("Full-time")
+  } else {
+    return("NA")
+  }
+}
+
+driver_category_seattle_v <- Vectorize(driver_category_seattle)
+
+driver_category_2 <- function(trips){
+  if (trips <= 40) {
+    return("1")
+  } else if (between(trips, 41, 160)) {
+    return("2") 
+  } else if(between(trips, 161, 240)) {
+    return("3")
+  } else if (between(trips, 241, 320)) {
+    return("4")
+  } else {
+    return("5")
+  }
+}
+driver_category_2_v <- Vectorize(driver_category_2)
+
+full_time_trips = 250
+# full_time_trips = 125
+driver_category_coarse <- function(trips){
+  if (trips <= full_time_trips) {
+    return ("Part time")
+  } else {
+    return ("Full time")
+  }
+}
+driver_category_coarse_v <- Vectorize(driver_category_coarse)
+
+calendar_month <- "10"
+test_months = c(as.Date(sprintf("2015-%s-01", calendar_month)),
+                as.Date(sprintf("2016-%s-01", calendar_month)),
+                as.Date(sprintf("2017-%s-01", calendar_month)),
+                as.Date(sprintf("2018-%s-01", calendar_month)),
+                as.Date(sprintf("2019-%s-01", calendar_month)),
+                as.Date(sprintf("2020-%s-01", calendar_month)),
+                as.Date(sprintf("2021-%s-01", calendar_month)),
+                as.Date(sprintf("2022-%s-01", calendar_month))
+                )
+
+measure_label <- c("driver_percent"= "Drivers", "trip_percent" = "Trips")
+```
+
+### Seattle classification
+
+First, The Seattle classification of Hyman et al to map that onto the Chicago data. The
+categories are:
+
+| Category | Trips      | Estimated hours / week |
+|----------|------------|------------------------|
+| 1        | \< 40      | \< 5                   |
+| 2        | 41 -- 160  | 5 -- 20                |
+| 3        | 161 -- 240 | 20 -- 30               |
+| 4        | 241 -- 320 | 30 -- 40               |
+| 5        | \> 320     | \> 40                  |
+
+The proportion of Casual drivers fell off quickly from 2016 to 2018, and
+the number of part-time (160-240) and full-time drivers rose. Since
+then, the composition has changed only a little.
+
+
+```{r category-coarse, echo=FALSE, message=FALSE}
+full_time_trips = 250
+
+sql={"select month_reported, driver_category, drivers, trips, total_trips, total_drivers, 
+		(100.0 * trips / total_trips) as trip_percent,
+		(100.0 * drivers / total_drivers) as driver_percent
+from
+( select month_reported, driver_category, drivers, trips,
+	sum(trips) over (partition by month_reported) as total_trips,
+	sum(drivers) over (partition by month_reported) as total_drivers
+from 
+(select month_reported, driver_category, count(*) as drivers, sum(number_of_trips) as trips
+    from
+      ( select 
+        month_reported, 
+        number_of_trips, 
+        case when number_of_trips < $1 then 'Part time' else 'Full time' end as driver_category
+      from drivers
+      where number_of_trips > 0 and month_reported > '2018-01-01') as T 
+  group by month_reported, driver_category ) as T2
+  ) as T3
+  order by month_reported, driver_category;"}
+
+rs <- dbSendQuery(con, sql)
+dbBind(rs, list(full_time_trips))
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+tb <- tb_sql  %>% 
+  select(c(month_reported, driver_category, driver_percent, trip_percent)) %>%
+  pivot_longer(cols=c(driver_percent, trip_percent),
+               names_to="measure",
+               values_to="value") %>%
+  mutate(measure=as.factor(measure)) %>%
+  mutate(measure=factor(measure, levels=rev(levels(measure)))) %>%
+  arrange(month_reported, driver_category) 
+
+labels = c("% of trips by full-time drivers", "% of drivers who are full time")
+
+p <- ggplot(data=tb %>% filter(driver_category=="Full time"), 
+            mapping=aes(x=month_reported, 
+                        y=value, 
+                        label=measure,
+                        color=measure))
+
+p + 
+  # facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
+  geom_line(linewidth=1) +
+  geom_point(size=1) +
+  geom_smooth(method = "lm") +
+  labs(title="Full-time ridehail drivers in Chicago",
+       subtitle=sprintf("Full timers (over %s trips per month) are a small fraction of drivers,\n but drive almost half of all trips.", full_time_trips),
+       x="Date",
+       y="Percent",
+       colour="Driver category") +
+  scale_y_continuous(limits=c(0, 70), breaks=waiver(), n.breaks=6) +
+  theme(legend.title=element_blank(), legend.position=c(0.15, 0.92), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  guides(colour=guide_legend(title="Measure", override.aes = list(size = 3,fill=NA))) +
+  scale_colour_tableau(palette="Tableau 10", labels=labels)
+```
+
+Here are the values for the most recent month:
+
+```{r full-time-this-month}
+tb %>% filter(month_reported==max(month_reported), driver_category=="Full time")
+```
+
+**Discussion**
+
+Despite the changes over the last five years, including the maturing of the Uber platform and Covid, the 
+driver population has remained surprisingly consistent. Full time drivers (over 275 trips per month) make up only about one in six drivers, but deliver over 40% of all trips.
+
+Full-timers and part-timers are both essential to Uber and Lyft's ability to deliver the volume of trips they handle. But these two groups do not always share the same interests.
+
+## Mean and median number of trips per driver
+
+Although there is no "one type of Uber driver", averages may still be useful to track trends.
+
+The average number of trips per driver increased during 2017 (as measured both by
+median and mean): the number of drivers stayed roughly the same
+while the number of trips continued to grow. In 2018 and 2019 there was
+a roughly steady state, with an average of about 125 trips per month
+(about 16 hours per week), a number that has been restored during 2022.
+
+
+```{r trips-per-driver, echo=FALSE}
+sql <- {"select month_reported, avg(number_of_trips) as mean, 
+          percentile_cont(0.5) within group (order by number_of_trips) as median
+        from drivers
+        where number_of_trips > 0
+        group by month_reported"}
+
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+tb <-tb_sql %>% pivot_longer(cols=c(mean, median), names_to="average", values_to="trips")
+
+p <- ggplot(data=tb, aes(x=month_reported, y=trips, colour=average))
+p + 
+  geom_point() +
+  # geom_smooth(method = "lm") +
+  labs(title="Average trips per active driver", 
+        subtitle="Showing both mean and median number of trips",
+        x="Date",
+        y="Trips/month") +
+  scale_x_date(date_labels="%b %Y") +
+  scale_y_continuous(limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
+  theme(legend.title=element_blank(), legend.position=c(0.15, 0.92), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  scale_color_tableau(palette="Tableau 10")
+```
+
+# Driver longevity and churn
+
+## Current driver population by longevity
+
+Take a specific month and show the distribution of drivers, by longevity, on the platform in that month.
+
+```{r driver-longevity, echo=FALSE}
+reference_month = as.Date("2023-10-01")
+
+sql = {"select driver_longevity, count(*) drivers
+      from ridehail.drivers
+      where driver_longevity >= 0
+      group by driver_longevity
+      order by driver_longevity"}
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+sql_stats <- {"select avg(driver_longevity) as mean_longevity, 
+	              percentile_cont(0.5) within group (order by driver_longevity) as median_longevity
+              from
+              ridehail.drivers 
+              where month_reported = $1;"}
+rs_stats <- dbSendQuery(con, sql_stats)
+dbBind(rs_stats, list(reference_month))
+tb_stats <- as_tibble(dbFetch(rs_stats, n=-1))
+mean_longevity <- tb_stats[["mean_longevity"]]
+median_longevity <- tb_stats[["median_longevity"]]
+mean_start <- as.Date(reference_month) %m-% months(as.integer(mean_longevity))
+median_start <- as.Date(reference_month) %m-% months(as.integer(median_longevity))
+
+p <- ggplot(data=tb_sql, aes(x=driver_longevity, y=drivers))
+
+p + geom_point() +
+  labs(title=sprintf("Longevity of active drivers reported in %s", reference_month),
+       subtitle=sprintf("Mean start time=%s; mean longevity=%s months; median longevity=%s months", 
+                        mean_start, 
+                        round((reference_month - mean_start)/30),
+                        round((reference_month - median_start)/30)
+                        ),
+       x="Driver longevity (months)") +
+  theme(legend.position="none") +
+  scale_color_tableau(palette="Tableau 10")
+```
+
+## The evolution of longevity 
+
+It can be easier to interpret this if we lump drivers into new or long-term workers, based on 
+whether they have been on the platform for more or less than a year.
+
+```{r driver-longevity-category, echo=FALSE}
+driver_longevity_category <- function(driver_longevity){
+  if (driver_longevity <= 12) {
+    return ("A year or less")
+  } else {
+    return ("More than a year")
+  }
+}
+driver_longevity_category_v <- Vectorize(driver_longevity_category)
+sql = {"select month_reported, driver_category, 
+      	(100.0 * drivers/total_drivers) as driver_percent,
+      	(100.0 * trips/total_trips) as trip_percent
+      from
+      (select month_reported, driver_category, drivers, trips,
+      	sum(drivers) over (partition by month_reported) as total_drivers,
+      	sum(trips) over (partition by month_reported) as total_trips
+      from
+      (select month_reported, driver_category, 
+      	count(*) as drivers, 
+      	sum(number_of_trips) as trips
+      from
+      ( select month_reported, 
+      	case when driver_longevity <= 12 then 'A year or less'
+      	else 'More than a year'
+      	end as driver_category,
+      	number_of_trips
+      from ridehail.drivers 
+      where driver_longevity >= 0 ) as T1
+      group by month_reported, driver_category ) as T2 ) as T3
+      where driver_category = 'A year or less';"}
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+tb <- tb_sql %>% 
+  pivot_longer(cols=c(driver_percent, trip_percent), names_to="measure", values_to="value")
+
+labels = c("% of trips by drivers with a year or less of experience", "% of drivers with a year or less of experience")
+
+p <- ggplot(data=tb, aes(x=month_reported, y=value, colour=measure, label=measure))
+
+p + 
+  # facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
+  geom_point() +
+  geom_smooth(method="loess") +
+  labs(title="New drivers in Chicago",
+       subtitle="Drivers with a year or less on the platform still make up over half of all drivers\n and provide over half of all trips.", 
+       caption="Ride hailing was still new and fast-growing in 2016, so there were few long-term drivers.\nSince then, the churn of incoming and leaving drivers has evened out.",
+       x="Time",
+       y="Percent") +
+  scale_y_continuous(breaks=waiver(), n.breaks=6, limits=c(0, NA)) +
+  theme(legend.title=element_blank(), legend.position=c(0.3, 0.15), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  guides(fill=guide_legend(title=)) +
+  scale_color_tableau(palette="Tableau 10", labels=labels)
+```
+
+## Driver mean and median longevity over time
+
+Both mean and median longevity (below) confirm the observation that the driver population
+has been on the platform for longer, over time, albeit with a major
+Covid interruption.
+
+The Chicago data does not allow us to see whether drivers have gaps in
+their work: we just have a first month they are recognized and the
+reporting month.
+
+The typical driver has now been on the platform for almost a year.
+Drivers who drive more trips have, on average, been on the platform just
+a little longer.
+
+```{r mean-longevity, echo=FALSE}
+sql <- {"select month_reported, 
+          avg(driver_longevity) as mean_longevity,
+          percentile_cont(0.5) within group (order by driver_longevity) as median_longevity
+         from ridehail.drivers
+         group by month_reported
+         order by month_reported"}
+
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+tb <- tb_sql %>%
+  pivot_longer(cols=c(mean_longevity, median_longevity), names_to="measure", values_to="value")
+  
+p <- ggplot(data=tb,
+            aes(x=month_reported, y=value, colour=measure))
+
+p + geom_point() +
+  #geom_smooth() +
+  labs(title="Chicago active driver longevity",
+       x = "Date",
+       y = "Active driver longevity (months)") +
+  scale_x_date(date_label="%b %Y") +
+  theme(legend.title=element_blank(), legend.position=c(0.15, 0.85), 
+        legend.key=element_rect(fill = "transparent"),
+        legend.background=element_rect(fill='transparent'), ) +
+  guides(fill=guide_legend(title=)) +
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+## Driver churn
+
+The next chart takes a given starting month, and looks at how many
+drivers are left over time.
+
+```{r churn-start, echo=FALSE}
+reference_month = as.Date("2022-01-01")
+
+sql <- {"select month_reported, count(*) drivers
+        from ridehail.drivers
+        where driver_start_month = $1
+        and month_reported > driver_start_month
+        group by month_reported
+        order by month_reported;"}
+rs <- dbSendQuery(con, sql)
+dbBind(rs, list(reference_month))
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+p <- ggplot(data=tb_sql, aes(x=month_reported, y=drivers))
+
+p + 
+  geom_point() +
+  geom_smooth(method="gam", se=TRUE) +
+  labs(title=sprintf("Active drivers starting in %s, still on the platform at a later time", reference_month),
+       # subtitle=sprintf("Mean time on platform = %s days", round(mean_expiry_month-reference_month)),
+       x="Month",
+       y="Drivers") +
+  theme(legend.position = "none") +
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+
+Now see if we can say "how many quit over their first year". The proportion is calculated by taking the number of drivers who start in a given month and who have trips in the month one year after that, and dividingby the number of drivers who start in a given month and who are present one month after that. The "one month after that" should avoid miscounting because of drivers who register but have not yet taken trips, which seems to be a significant number.
+
+
+```{r driver-churn-facet, echo=FALSE}
+sql <- {"select driver_start_month, 
+        		(100.0 * one_year_active_drivers / one_month_active_drivers) as percent_drivers_who_stay_a_year
+        from 
+        (select driver_start_month,
+        		month_reported,
+        		drivers as one_year_active_drivers, 
+        		lag(drivers, 1) over (
+        			partition by driver_start_month
+        			order by month_reported
+        		) as one_month_active_drivers,
+        		trips		
+        from 
+        (select driver_start_month, 
+        		month_reported,
+        		count(*) as drivers, 
+        		sum(number_of_trips) as trips
+        from ridehail.drivers
+        where driver_start_month between '2016-01-01' 
+        	and (current_date - '1 year'::interval)
+        group by driver_start_month, month_reported
+        having (month_reported = driver_start_month + '1 year'::interval)
+        or (month_reported = driver_start_month + '1 month'::interval)
+        order by driver_start_month, month_reported) as T1
+        ) as T2
+        where month_reported = driver_start_month + '1 year'::interval
+        order by driver_start_month"};
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+p <- ggplot(data=tb_sql, aes(x=driver_start_month, y=percent_drivers_who_stay_a_year))
+
+p + 
+  geom_point() +
+  ylim(0, NA) +
+  # geom_smooth(method="gam", se=TRUE) +
+  labs(title="Chicago ridehail driver churn",
+    subtitle="Percent of drivers still active after a year",
+    caption="Over two-thirds of drivers quit within a year.",
+    x="Date",
+    y="Percent",
+    colour="Quantity") +
+  theme(legend.position = "none") +
+  scale_colour_tableau(palette="Tableau 10")
+```
+
+## Trip distribution
+
+In a given month, how many trips are given by drivers with a residency
+of X months?
+
+```{r trip-longevity, echo=FALSE}
+sql <- {"select driver_longevity, date_part('year', month_reported) as year, sum(number_of_trips) as trips
+  from ridehail.drivers
+  where date_part('month', month_reported) = 4
+  and date_part('year', month_reported) in (2018, 2020, 2022, 2024)
+  and driver_longevity > 0
+  group by month_reported, driver_longevity"}
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+tb <- tb_sql %>% mutate(year=as.factor(year))
+
+p <- ggplot(data=tb,
+            aes(x=driver_longevity, y=trips, colour=year))
+
+p + geom_point() +
+  scale_x_continuous(limits=c(0,24),
+                     labels=label_number(scale_cut=cut_short_scale())) +
+  scale_y_continuous(labels=label_number(scale_cut=cut_short_scale())) +
+  labs(title="The evolution of driver longevity",
+       subtitle="",
+       x="Driver longevity (months)",
+       y="Trips") +
+  # geom_smooth(se=FALSE) +
+  theme(legend.position = c(0.8, 0.7)) +
+  scale_colour_tableau()
+```
+
+Now do this over all months, not just an individual month, summing over
+the longevity of the driver.
+
+```{r longevity, echo=FALSE}
+sql <- {"select driver_longevity, sum(number_of_trips) as trips
+         from ridehail.drivers
+         where driver_longevity > 0
+         and month_reported > '2016-01-01'
+         group by driver_longevity
+         order by driver_longevity;"}
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+mean_longevity <- tb %>% 
+  summarise(mean=sum(driver_longevity * trips)/sum(trips)) %>% 
+  pull(var=mean)
+
+p <- ggplot(data=tb_sql,
+            aes(x=driver_longevity, y=trips))
+
+p + 
+  geom_point() +
+  # geom_line(linetype="dashed") +
+  labs(title="Number of trips, by driver longevity, for all trips since 2016",
+       subtitle=sprintf("Mean longevity = %s months", round(mean_longevity)),
+       x="Driver longevity on platform (months)", 
+       y="Trips") +
+  scale_y_continuous(labels=label_number(scale_cut=cut_short_scale())) +
+  geom_vline(xintercept = mean_longevity, linetype="dashed", 
+                color = "steelblue", alpha=0.6, size=1) +
+  theme(legend.position = "none") +
+  scale_colour_tableau()
+```
+
+## New starts and quits, by month
+
+First let's do starts, as that is easy.
+
+The data point for Jan 2016 was a BIG outlier, and is excluded.
+
+```{r echo=FALSE}
+sql <- {"select month_reported, total_drivers, driver_diff, starts, (starts-driver_diff) as quits
+        from
+        ( select T1.month_reported as month_reported, total_drivers, 
+        		total_drivers - lag(total_drivers, 1) over (
+        			order by T1.month_reported
+        		) as driver_diff, 
+        		starts
+        		from
+        		(select month_reported, count(*) as total_drivers
+        		from ridehail.drivers  
+        		group by month_reported ) as T1 
+        	inner join
+        		(select month_reported,
+        				count(*) as starts
+        		from ridehail.drivers
+        		where month_reported = driver_start_month + '1 month'::interval
+        		group by month_reported ) as T2
+        	on T1.month_reported = T2.month_reported ) as T3
+        where driver_diff is not null
+        order by month_reported;"}
+rs <- dbSendQuery(con, sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+
+
+tb <- tb_sql %>%
+  filter(starts > 0, quits > 0) %>%
+  select(c(month_reported, starts, quits)) %>%
+  pivot_longer(cols=c(starts, quits),
+                    names_to=c("category")) %>%
+  na.omit()
+
+p <- ggplot(data=tb, aes(x=month_reported, y=value, colour=category))
+
+p + 
+  geom_point() +
+  labs(title="Number of drivers starting and quitting each month",
+       subtitle="Only includes drivers who last for at least one month",
+       x="Date",
+       y="Drivers starting or quitting") +
+  scale_y_continuous(limits=c(-1000, 10000)) +
+  theme(legend.position = c(0.3, 0.2)) +
+  scale_colour_tableau()
+```

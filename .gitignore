@@ -1,0 +1,7 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.html
+./data/Transportation_Network_Providers_-_Drivers.csv
+./data/trip_aggregates_20*.csv
