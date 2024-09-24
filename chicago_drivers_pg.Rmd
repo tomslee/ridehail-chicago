@@ -35,12 +35,12 @@ Can we connect to postgresql?
 
 ```{r postgresql, echo=FALSE}
 # AWS
+# The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
 con <- dbConnect(RPostgres::Postgres(),
                     host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
                     port=5432,
                     dbname="postgres",
-                    user="rhreader",
-                    password="BETALMOrAShU")
+                    user="rhreader")
 ```
 
 
