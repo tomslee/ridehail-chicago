@@ -662,7 +662,8 @@ p <- ggplot(data=tb,
             aes(x=driver_longevity, y=trip_fraction, colour=factor_month_reported))
 p + geom_point() +
   ggtitle("The evolution of active driver longevity") +
-  scale_x_continuous("Active driver longevity (months)", limits=c(0,24), labels=label_number(scale_cut=cut_short_scale())) +
+  scale_x_continuous("Active driver longevity (months)", limits=c(0,24),
+                     labels=label_number(scale_cut=cut_short_scale())) +
   scale_y_continuous("Trip Fraction", labels=label_number(scale_cut=cut_short_scale())) +
   geom_smooth(se=FALSE) +
   theme(legend.position = c(0.8, 0.7)) +

@@ -1,0 +1,70 @@
+---
+title: "Chicago ridehail surveillance pricing"
+author: "Tom Slee"
+format: html
+editor: visual
+---
+
+
+## Overview
+
+```{r}
+#| label: setup
+#| echo: false
+librarian::shelf(tidyverse, lubridate, ggplot2, 
+                 ggthemes, RColorBrewer, janitor, RPostgres)
+
+update_geom_defaults("line", aes(linewidth=1.5, alpha=1.0))
+update_geom_defaults("point", aes(size=2, fill="Steel Blue", alpha=1.0))
+# AWS
+# The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
+con <- dbConnect(RPostgres::Postgres(),
+                    host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
+                    port=5432,
+                    dbname="postgres",
+                    user="rhreader")
+```
+
+```{r}
+#| label: overview
+#| echo: false
+sql <- {"select 
+  to_date(year || '-' || month || '-01', 'YYYY-MM-DD') as trip_date, 
+  trips
+  from (
+    select year, month, count(*) as trips 
+    from ridehail.trip_fares 
+    group by year, month
+    order by year, month) as T"
+  }
+rs <- dbSendQuery(con,sql)
+tb_sql <- as_tibble(dbFetch(rs, n=-1))
+# Clear the result
+dbClearResult(rs)
+
+
+p <- ggplot(data=tb_sql, aes(x=trip_date, y=trips, 
+                             colour="dummy"))
+p + 
+  #facet_wrap(vars(measure), scales="free") +
+  geom_point() +
+  labs(title="TNC trips per month in Chicago",
+       subtitle="Trips on the first Thursday of the month",
+         x="Date",
+         y="Trips") + 
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.position="none") +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
+# One Community Area
+
+Detailed look at one community area
+
+# Model results
+
+The apparent small number of trips in June 2019 is a data collection artifact: many of the trips recorded on that
+date are missing the trip duration, and so cannot be included in the study.
+

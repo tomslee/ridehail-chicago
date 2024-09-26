@@ -1,0 +1,412 @@
+---
+title: "Chicago Ridehail: Trips Workbook"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+  number_sections: true
+  df_print: paged
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Setup and connect
+
+No text needed here.
+
+```{r setup, include=FALSE, echo=FALSE}
+# install.packages("librarian")
+librarian::shelf(tidyverse, ggplot2, knitr, reshape2, ggtext, 
+                 jsonlite, stringr, lubridate, scales, 
+                 ggthemes, RColorBrewer, viridis, vroom,
+                 janitor, RPostgres
+                 )
+
+knitr::opts_knit$set(echo = FALSE)
+#update_geom_defaults("point", aes(shape=21, fill="white", size=2, stroke=2, colour="Steel Blue"))
+update_geom_defaults("point", aes(shape=16, alpha=1.0))
+update_geom_defaults("line", aes(linewidth=1, alpha=1.0))
+update_geom_defaults("bar", aes(shape=16, alpha=1.0, size=3, fill="Steel Blue"))
+```
+
+
+```{r postgresql, echo=FALSE}
+# AWS
+# The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
+con <- dbConnect(RPostgres::Postgres(),
+                    host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
+                    port=5432,
+                    dbname="postgres",
+                    user="rhreader")
+```
+
+# "Upfront fare" variance experiments
+
+Can we say anything about the extent to which Uber "upfront fares" have made fares deviate from the 
+"rate card" calculation? (Note: "upfront fares" is different to "upfront rates" that now control how 
+much drivers earn on a trip in many US markets).
+
+Data set notes from [Chicago  Data Portal](https://data.cityofchicago.org/Transportation/Transportation-Network-Providers-Trips-2023-/n26f-ihde/about_data):
+
+* trip_id: A unique identifier for the trip.
+* trip_start_timestamp: When the trip started, rounded to the nearest 15 minutes.
+* trip_second: Time of the trip in seconds. (I convert this to minutes).
+* trip_miles: Distance of the trip in miles.
+* fare: The fare for the trip, rounded to the nearest $2.50.
+
+## Upfront fares in Chicago
+
+* A [reddit post](https://www.reddit.com/r/uber/comments/xrkdhf/uber_upfront_prices_live_in_chicago/) from September 2022 says "Uber upfront prices live in Chicago". Does it mean fares or pay?
+* [The rideshare guy](https://therideshareguy.com/upfront-pricing-for-drivers/) says that Upfront pricing for drivers (i.e. upfront pay) is coming to Chicago on Sept 2022.
+
+```{r upfront-parameters, echo=FALSE}
+years <- 2019:2024
+months <- list(2, 6, 10)
+first_thursday_list_feb <- list("2019-02-07", 
+                            "2020-02-06", 
+                            "2021-02-04", 
+                            "2022-02-03", 
+                            "2023-02-02", 
+                            "2024-02-01")
+first_thursday_list_jun <- list("2019-06-06",
+                            "2020-06-04", 
+                            "2021-06-03", 
+                            "2022-06-02", 
+                            "2023-06-01", 
+                            "2024-06-06")
+first_thursday_list_oct <- list("2019-10-03",
+                            "2020-10-01", 
+                            "2021-10-07", 
+                            "2022-10-06", 
+                            "2023-10-05", 
+                            "2024-10-03")
+first_thursdays = list(first_thursday_list_feb, first_thursday_list_jun, first_thursday_list_oct)
+first_seven_dates <- seq(ymd(sprintf("%s-%s-01", year, month)),
+                         ymd(sprintf("%s-%s-07", year, month)),
+                         by="1 day")
+first_thursday <- first_seven_dates[wday(first_seven_dates, label=TRUE)=="Thu"]
+test_date <- format(first_thursday, "%Y-%m-%d")
+pickup_community_area = 4
+```
+
+
+# Build models for a list of community areas
+
+The data collected is for the first Thursday of February, June, and October for each year. I collected it by downloading a query result from the Chicago web site and uploading it to PostgreSQL using the pgsql \\copy command. It is stored in a table "ridehail.trip_fare" and models are built from a cleaned data set accessed through the view "ridehail.trip_fares", which filters out trips with missing fields that are important for the models.
+
+```{r model, echo=FALSE}
+pickup_community_area_list = list(32)
+years <- 2019:2024
+months <- list(2, 6, 10)
+
+sql <- {"select pickup_community_area, year, month, trip_id, trip_miles, 
+  trip_minutes, fare, additional_charges
+	from ridehail.trip_fares 
+	where pickup_community_area = $1
+	and year = $2 and month = $3"
+  } 
+
+sql_agg <- {"select pickup_community_area, 
+  trip_start_timestamp::date as model_date,
+	count(*) as trip_count, 
+	avg(trip_miles) as mean_trip_miles,
+	avg(trip_minutes) as mean_trip_minutes, avg(fare) as mean_fare,
+	avg(fare + additional_charges) as mean_total_fare
+  from ridehail.trip_fares
+	where pickup_community_area = $1
+	and year = $2 and month = $3
+  group by pickup_community_area, model_date"
+} 
+
+for (pickup_community_area in pickup_community_area_list){
+  for (this_year in years) {
+    for (this_month in months){
+        s_date <- sprintf("%s-%s", this_year, this_month)
+        # Get aggregates
+        rs_agg <- dbSendQuery(con,sql_agg)
+        dbBind(rs_agg, list(pickup_community_area, this_year, this_month))
+        tb_agg <- as_tibble(dbFetch(rs_agg, n=-1))
+        dbClearResult(rs_agg)
+        if(nrow(tb_agg) == 0){ next }
+        # Now compute the model
+        rs <- dbSendQuery(con,sql)
+        dbBind(rs, list(pickup_community_area, this_year, this_month))
+        tb_sql <- as_tibble(dbFetch(rs, n=-1))
+        dbClearResult(rs)
+        if(nrow(tb_sql) > 0){
+          model <- lm(fare ~ trip_miles + trip_minutes, data=tb_sql)
+          intercept <- summary(model)$coefficients["(Intercept)", "Estimate"]
+          # coeff_intercept[s_year] <- 0
+          miles <- summary(model)$coefficients["trip_miles", "Estimate"]
+          minutes <- summary(model)$coefficients["trip_minutes", "Estimate"]
+          rse <- summary(model)$sigma
+          tb_result <- tb_agg %>% 
+            mutate(coeff_per_mile=miles,
+                   coeff_per_minute=minutes,
+                   coeff_intercept=intercept,
+                   rse=rse)
+        }
+        dbAppendTable(con, "trip_model", tb_result)
+        print(sprintf("completed model for CA %s on %s-%s", 
+                      pickup_community_area, this_year, this_month))
+    }
+  }
+}
+```
+
+# Analysis: Overview
+
+```{r fare_model, echo=FALSE}
+sql <- {"select 
+  to_date(year || '-' || month || '-01', 'YYYY-MM-DD') as trip_date, 
+  trips
+  from (
+    select year, month, count(*) as trips 
+    from ridehail.trip_fares 
+    group by year, month
+    order by year, month) as T"
+  }
+rs <- dbSendQuery(con,sql)
+tb <- as_tibble(dbFetch(rs, n=-1))
+# Clear the result
+dbClearResult(rs)
+
+p <- ggplot(data=tb, aes(x=trip_date, y=trips, 
+                             colour="dummy"))
+p + 
+  #facet_wrap(vars(measure), scales="free") +
+  geom_line() +
+  labs(title="TNC recorded trips with non-zero time recorded, per month in Chicago",
+       subtitle="Trips on the first Thursday of the month",
+       caption="The low June 2019 number is a data collection artifact:many trips are missing the trip_seconds field",
+         x="Date",
+         y="Recorded Trips") + 
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.position="none") +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+# Analysis: details for a specific community area
+
+```{r plot_experiment, echo=FALSE}
+pickup_community_area = 0
+years <- 2019:2024
+months <- list(2, 6, 10)
+rm(tb_model_detail)
+for (this_year in years) {
+  for (this_month in months){
+      s_date <- sprintf("%s-%s", this_year, this_month)
+      sql <- {"select year, month, trip_id, trip_miles, 
+        trip_minutes, fare, additional_charges
+      	from ridehail.trip_fares 
+      	-- where pickup_community_area = $1
+      	-- and year = $2 and month = $3
+        where year = $1 and month = $2"
+        } 
+      rs <- dbSendQuery(con,sql)
+      # dbBind(rs, list(pickup_community_area, this_year, this_month))
+      dbBind(rs, list(this_year, this_month))
+      tb_sql <- as_tibble(dbFetch(rs, n=-1)) 
+      dbClearResult(rs)
+      if(nrow(tb_sql) > 0){
+        model <- lm(fare ~ trip_miles + trip_minutes, data=tb_sql)
+        coeff_intercept <- summary(model)$coefficients["(Intercept)", "Estimate"]
+        coeff_miles <- summary(model)$coefficients["trip_miles", "Estimate"]
+        coeff_minutes <- summary(model)$coefficients["trip_minutes", "Estimate"]
+        rse <- summary(model)$sigma
+        tb_result <- tb_sql %>% 
+          mutate(rate_card_fare=round((coeff_miles * trip_miles + 
+                                         coeff_minutes * trip_minutes +
+                                         coeff_intercept)/2.5) * 2.5) %>%
+          mutate(residual=fare - rate_card_fare) %>%
+          select(c(year, month, trip_id, fare, rate_card_fare, residual))
+        if(exists("tb_model_detail")){
+          tb_model_detail <- union(tb_model_detail, tb_result)
+        } else {
+          tb_model_detail <- tb_result  
+        }
+      }
+  }
+}
+
+p <- ggplot(data=tb_model_detail, 
+            mapping=aes(x=rate_card_fare, y=fare, colour=as.factor(year)))
+
+p +
+  facet_wrap(vars(year), scales = "free_y") +
+  geom_point(size=2, alpha=0.05) +
+  geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title=sprintf("Chicago ridehail, Community Area %s: actual vs best-fit time & distance fares", 
+                     pickup_community_area ),
+       x="Best fit time & distance fare (to nearest $2.50)",
+       y="Actual fare (to nearest $2.50)") +
+  scale_x_continuous(limits=c(0, 40)) +
+  scale_y_continuous(limits=c(0, 40)) +
+  theme(legend.position = "none", legend.title=element_blank()) +
+  scale_colour_brewer(palette="Dark2")
+```
+## Plotting errors directly
+
+```{r echo=FALSE}
+# Another way of plotting errors
+p <- ggplot(data=tb_model_detail, 
+            mapping=aes(x=rate_card_fare, y=residual, colour="dummy", fill=as.factor(year)))
+p +
+  facet_wrap(vars(year), scales = "free_y") +
+  geom_point(size=2, alpha=0.05) +
+  geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title=sprintf("Chicago ridehail, Community Area %s: deviation from time & distance fares", 
+                     pickup_community_area ),
+       x="Best fit time & distance fare (to nearest $2.50)",
+       y="Deviation from time & distance fare ($)") +
+  scale_x_continuous(limits=c(0, 40)) +
+  scale_y_continuous(limits=c(-30, +30)) +
+  theme(legend.position = "none", legend.title=element_blank()) +
+  scale_colour_brewer(palette="Dark2")
+```
+
+# Analysis: which community areas are busy?
+
+```{r ca_trip_counts, echo=FALSE}
+sql <- {"select pickup_community_area, count(*) as recorded_trips,
+               100.0 * count(*)/(sum(count(*)) over ()) as trip_percent
+        from ridehail.trip_fares
+        group by pickup_community_area
+        order by trip_percent desc"
+  } 
+rs <- dbSendQuery(con,sql)
+# dbBind(rs, list(pickup_community_area))
+tb <- as_tibble(dbFetch(rs, n=-1))
+tb <- tb %>% slice_min(trip_percent, n=10)
+dbClearResult(rs)
+
+p <- ggplot(data=tb, 
+            mapping=aes(x=reorder(pickup_community_area, -trip_percent), 
+                        y=trip_percent, 
+                        colour="dummy",
+                        fill="dummy"))
+
+p +
+  geom_bar(stat="identity", width=0.8) +
+  labs(title="Chicago ridehail: trips by Community Area",
+       x="Community Area",
+       y="Percentage of recorded trips") +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+```
+
+# Analysis: has the distribution of trips changed?
+
+Take a busy downtown community area (8, 32) and compare it to a low-traffic area (47, 55).
+
+TODO: Better to compare to the total for each month, and probably a more concise query.
+
+```{r ca_changing_traffic, echo=FALSE}
+sql <- {"select pickup_community_area, T1.model_date, 
+        (recorded_trips::float / recorded_trips_8::float) as ratio8 
+        from
+        (select pickup_community_area, 
+        		trip_start_timestamp::date as model_date, 
+        		count(*) as recorded_trips
+        	from ridehail.trip_fares
+        	group by pickup_community_area, model_date) as T1 
+        inner join 
+        (select trip_start_timestamp::date as model_date, 
+        		count(*) as recorded_trips_8
+        from ridehail.trip_fares
+        where pickup_community_area = 8
+        group by model_date) as T2 
+        on T1.model_date = T2.model_date;"
+  } 
+rs <- dbSendQuery(con,sql)
+# dbBind(rs, list(pickup_community_area))
+tb <- as_tibble(dbFetch(rs, n=-1))
+dbClearResult(rs)
+
+p <- ggplot(data=tb %>% filter(pickup_community_area %in% c(8, 32, 7, 36, 47, 55)), 
+            mapping=aes(x=model_date, 
+                        y=ratio8, 
+                        colour="dummy",
+                        fill="dummy"))
+
+p +
+  facet_wrap(vars(pickup_community_area), scales="free_y") +
+  geom_line() +
+  labs(title="Chicago ridehail: trips by Community Area (compared to CA 8)",
+       subtitle="Conclusion: a slight shift to less busy areas"
+       x="Community Area",
+       y="Fraction of recorded trips compared to CA 8") +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+```
+
+# Analysis: aggregate and modelled information
+
+
+```{r ca_model_plot, echo=FALSE}
+pickup_community_area_list = list(0)
+index = 0
+for(pickup_community_area in pickup_community_area_list){
+  index = index + 1
+  sql <- {"select pickup_community_area, 
+    model_date,
+  	-- cast(trip_count as numeric) as trip_count, 
+  	-- mean_trip_miles,
+  	-- mean_trip_minutes, 
+  	-- mean_fare,
+  	coeff_per_mile,
+  	coeff_per_minute,
+  	coeff_intercept,
+  	rse
+  	from ridehail.trip_model
+  	where pickup_community_area = $1"
+  } 
+  rs <- dbSendQuery(con,sql)
+  dbBind(rs, list(pickup_community_area))
+  tb_tmp <- as_tibble(dbFetch(rs, n=-1))
+  dbClearResult(rs)
+  if(index > 1){
+    tb <- union(tb, tb_tmp)
+  } else {
+    tb <- tb_tmp
+  }
+}
+
+#trip_count,coeff_per_mile,coeff_per_minute,coeff_intercept,rse,mean_trip_miles,mean_trip_minutes,mean_fare
+                 
+tb <- tb %>%
+  pivot_longer(!c(pickup_community_area, 
+                  model_date),
+               names_to="category", values_to="measure"
+               ) 
+
+p <- ggplot(data=tb, 
+            mapping=aes(x=model_date, 
+                        y=measure, 
+                        colour=as.factor(pickup_community_area)),
+                        fill=as.factor(pickup_community_area))
+
+p +
+  facet_wrap(vars(category), scales = "free_y") +
+  geom_line() +
+  #geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title=sprintf("Chicago ridehail trends: Community Area %s",
+                     pickup_community_area),
+       x="Date",
+       y="value",
+       colour="Pickup Community Area") +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2")
+```
