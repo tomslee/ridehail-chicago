@@ -50,7 +50,7 @@ drivers <-vroom(csv_file, col_types=cols(
 
 # Data source
 
-Chicago publishes three data sets about Transportation Network Providers operations in the city. This notebook uses jhuuuuuuuuuuuuu4x9i3ytz dfZ       the [Drivers](https://data.cityofchicago.org/Transportation/Transportation-Network-Providers-Drivers/j6wf-834c) data set. All three are updated monthly. I download the Drivers set as a CSV file; the Trips data set is too big for that, and (in other notebooks) I query it from the notebook.
+Chicago publishes three data sets about Transportation Network Providers operations in the city. This notebook uses the [Drivers](https://data.cityofchicago.org/Transportation/Transportation-Network-Providers-Drivers/j6wf-834c) data set. All three are updated monthly. I download the Drivers set as a CSV file; the Trips data set is too big for that, and (in other notebooks) I query it from the notebook.
 
 After download, remove  some obvious gaps and errors (like drivers with a start date before 2011, or drivers with a start date after the month reported). 
 
@@ -92,14 +92,14 @@ p <- ggplot(data= tb %>%
             aes(x=month_reported, y=value, colour=measure))
 p + 
   #facet_wrap(vars(measure), scales="free") +
-  geom_point() +
+  geom_line() +
   labs(title="TNC trips per month in Chicago",
          x="Year",
          y="Trips per month") + 
   scale_y_continuous(limits=c(0, NA), 
                      labels=label_number(scale_cut=cut_short_scale())) +
   theme(legend.position="none") +
-  scale_colour_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 **Discussion**
@@ -150,7 +150,7 @@ tb <- active_drivers %>%
 p <- ggplot(data=tb %>% filter(month_reported > as.Date("2016-12-30")),
             aes(x=month_reported, y=drivers, colour=dummy))
 p + 
-  geom_point() +
+  geom_line() +
   labs(title="TNC active drivers in Chicago",
        subtitle="Active drivers are those who drive at least one trip in the month",
        x="Date",
@@ -158,7 +158,7 @@ p +
   scale_x_date(date_breaks = "1 year", date_labels = "%b %Y") +
   scale_y_continuous(limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
   theme(legend.position="none") +
-  scale_color_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 **Discussion**
@@ -185,7 +185,7 @@ p <- ggplot(data= tb %>%
             aes(x=month_reported, y=trips_per_driver, colour=dummy))
 p + 
   #facet_wrap(vars(measure), scales="free") +
-  geom_point() +
+  geom_line() +
   labs(title="TNC monthly trips per active driver in Chicago",
          x="Date",
          y="Trips per active driver") + 
@@ -193,7 +193,7 @@ p +
   scale_y_continuous(limits=c(0, NA), 
                      labels=label_number(scale_cut=cut_short_scale())) +
   theme(legend.position="none") +
-  scale_colour_tableau(palette="Tableau 10")  
+  scale_colour_brewer(palette="Dark2")
 ```
 
 # More about drivers
@@ -219,7 +219,7 @@ p +
        x="Trips",
        y="Drivers") +
   theme(legend.position="none") +
-  scale_fill_tableau(palette="Tableau 10")
+  scale_fill_brewer(palette="Dark2")
 ```
 
 ## Categorizing drivers
@@ -350,7 +350,7 @@ p +
         legend.key=element_rect(fill = "transparent"),
         legend.background=element_rect(fill='transparent'), ) +
   guides(colour=guide_legend(title="Measure", override.aes = list(size = 3,fill=NA))) +
-  scale_colour_tableau(palette="Tableau 10", labels=labels)
+  scale_colour_brewer(palette="Dark2", labels=labels)
 ```
 
 Here are the values for the most recent month:
@@ -387,7 +387,7 @@ tb <- active_drivers %>%
 
 p <- ggplot(data=tb, aes(x=month_reported, y=trips, colour=average))
 p + 
-  geom_point() +
+  geom_line() +
   # geom_smooth(method = "lm") +
   labs(title="Average trips per active driver", 
         subtitle="Showing both mean and median number of trips",
@@ -398,7 +398,7 @@ p +
   theme(legend.title=element_blank(), legend.position=c(0.15, 0.92), 
         legend.key=element_rect(fill = "transparent"),
         legend.background=element_rect(fill='transparent'), ) +
-  scale_color_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 # Driver longevity and churn
@@ -430,7 +430,8 @@ median_start <- active_drivers %>%
 
 p <- ggplot(data=tb, aes(x=driver_longevity, y=Drivers, colour=dummy))
 
-p + geom_point() +
+p + 
+  geom_line() +
   labs(title=sprintf("Longevity of active drivers reported in %s", reference_month),
        subtitle=sprintf("Mean start time=%s; mean longevity=%s months; median longevity=%s months", 
                         mean_start$start[1], 
@@ -439,7 +440,7 @@ p + geom_point() +
                         ),
        x="Driver longevity (months)") +
   theme(legend.position="none") +
-  scale_color_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 It can be easier to interpret this if we lump drivers into new or long-term workers, based on 
@@ -481,7 +482,7 @@ p <- ggplot(data=tb, aes(x=month_reported, y=value, colour=measure, label=measur
 
 p + 
   # facet_wrap(~measure, labeller=labeller(measure=measure_label)) +
-  geom_point() +
+  geom_line() +
   geom_smooth(method="loess") +
   labs(title="New drivers in Chicago",
        subtitle="Drivers with a year or less on the platform still make up over half of all drivers\n and provide over half of all trips.", 
@@ -493,7 +494,7 @@ p +
         legend.key=element_rect(fill = "transparent"),
         legend.background=element_rect(fill='transparent'), ) +
   guides(fill=guide_legend(title=)) +
-  scale_color_tableau(palette="Tableau 10", labels=labels)
+  scale_colour_brewer(palette="Dark2", labels=labels)
 ```
 
 Both mean and median longevity (below) confirm the observation that the driver population
@@ -520,14 +521,14 @@ p <- ggplot(data=tb,
             aes(x=month_reported, y=mean_longevity, 
                 colour=dummy))
 
-p + geom_point() +
+p + geom_line() +
   #geom_smooth() +
   labs(title="Chicago active driver mean longevity",
        x = "Date",
        y = "Mean active driver longevity (months)") +
   scale_x_date(date_label="%b %Y") +
   theme(legend.position="none") +
-  scale_colour_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 ```{r median-longevity, echo=FALSE}
@@ -543,13 +544,13 @@ p <- ggplot(data=tb,
             aes(x=month_reported, y=median_longevity, colour=dummy))
 
 p + 
-  geom_point() +
+  geom_line() +
   geom_smooth(method="loess", se=FALSE) +
   labs(title="Median active driver longevity over time",
        x="Time",
        y="Median active driver longevity (months)") +
   theme(legend.position="none") +
-  scale_colour_tableau()
+  scale_colour_brewer(palette="Dark2")
 ```
 
 
@@ -584,7 +585,7 @@ p +
        x="Month",
        y="Drivers") +
   theme(legend.position = "none") +
-  scale_colour_tableau(palette="Tableau 10")
+  scale_colour_brewer(palette="Dark2")
 ```
 
 
@@ -629,7 +630,7 @@ p +
     y="Percent",
     colour="Quantity") +
   theme(legend.position = "none") +
-  scale_colour_tableau(palette="Tableau 10")
+ scale_colour_brewer(palette="Dark2")
 ```
 
 ## Trip distribution
@@ -665,7 +666,7 @@ p + geom_point() +
   scale_y_continuous("Trip Fraction", labels=label_number(scale_cut=cut_short_scale())) +
   geom_smooth(se=FALSE) +
   theme(legend.position = c(0.8, 0.7)) +
-  scale_colour_tableau()
+  scale_colour_brewer(palette="Dark2")
 ```
 
 Now do this over all months, not just an individual month, summing over
@@ -688,8 +689,7 @@ p <- ggplot(data=tb,
             aes(x=driver_longevity, y=trips, colour=dummy))
 
 p + 
-  geom_point() +
-  geom_line(linetype="dashed") +
+  geom_line() +
   ggtitle("Number of trips, by active driver longevity",
           subtitle=sprintf("Mean longevity = %s months", round(mean_longevity))) +
   xlab("Active driver longevity on platform (months)") +
@@ -698,7 +698,7 @@ p +
   geom_vline(xintercept = mean_longevity, linetype="dashed", 
                 color = "steelblue", alpha=0.6, size=1) +
   theme(legend.position = "none") +
-  scale_colour_tableau()
+  scale_colour_brewer(palette="Dark2")
 ```
 
 ## New starts and quits, by month
@@ -720,12 +720,12 @@ tb_starts <- active_drivers %>%
 
 p <- ggplot(data=tb_starts,
             aes(x=driver_start_month, y=starts, colour=dummy))
-p + geom_point() +
+p + geom_line() +
   ggtitle("Number of drivers starting each month") +
   xlab("Month") +
   scale_y_continuous("Drivers starting", labels=label_number(scale_cut=cut_short_scale())) +
   theme(legend.position = "none") +
-  scale_colour_tableau()
+  scale_colour_brewer(palette="Dark2")
 ```
 
 ```{r echo=FALSE}
@@ -747,10 +747,9 @@ tb_long <- tb %>%
 p <- ggplot(data=tb_long, aes(x=month_reported, y=value, colour=category))
 
 p + 
-  geom_point() +
+  geom_line() +
   labs(x="Date",
        y="Drivers starting or quitting") +
   scale_y_continuous(limits=c(-1000, 10000)) +
-  # scale_colour_brewer(palette = "Dark2") +
-  scale_colour_tableau()
+  scale_colour_brewer(palette = "Dark2")
 ```
