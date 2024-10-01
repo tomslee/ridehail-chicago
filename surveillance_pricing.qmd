@@ -1,33 +1,114 @@
 ---
-title: "Chicago ridehail surveillance pricing"
-author: "Tom Slee"
-format: html
+title: "\"Upfront\" Fares Are Anything But"
+title-block-banner: true
+author: 
+  - name: "RideFairTO"
+    url: https://ridefair.ca/
+date: last-modified
+description: >
+  Uber promotes the transparency of its "upfront" fares and pay,
+  but the reality of "upfront" is a black box.
+abstract: >
+  In the USA, Uber is using its quasi-monopoly position together with automated
+  surveillance to charge customers more and to pay drivers less.
+  As "upfront wages" come to Canada, it's time for the Competition Bureau to 
+  pay attention.
+bibliography: references.bib
+toc: true
+toc-depth: 2
+toc-title: Contents
+number-sections: true
+number-depth: 1
+callout-appearance: simple
+format:
+  html:
+    html-math-method: katex
+    # css: styles.css
+    anchor-sections: true
+    citations-hover: true
+    footnotes-hover: true
+    crossrefs-hover: true
+    citation-location: margin
+    toc-location: left
+  PrettyPDF-pdf:
+    colorlinks: true
+    keep-tex: true
 editor: visual
 ---
 
+# Introduction
 
-## Overview
+Some years ago, Uber introduced "upfront pricing" for passengers. Instead of giving an estimate based on per-kilometer (or per-mile) and per-minute rates, the Uber app "shows an upfront price to your destination every time – so you can sit back and enjoy the trip".[@uberinc.HowAreFares2022]
+
+Analysis of Chicago data shows that Uber has successfully increased average fares, and has also increased the use of personalized surveillance pricing. These two together show that Uber is capturing an increasing share of the ridehail market consumer surplus.
+
+# Consumer surplus and market competition
+
+In an ideal competitive market, many consumers can get a product or service for a lower price than they would be willing to pay. This price gap between, added up over all consumers, is called the consumer surplus from competition.
+
+In a competitive market, firms cannot raise their prices because other firms would then undercut them. In a monopolistic market, firms can raise their prices without worrying about competition. From the firm's point of view, the loss of those consumers who are no longer able or willing to buy the product is more than made up for by the increased price that the remaining consumers pay. A monopoly is able to make more money, while reducing the consumer surplus.
+
+From a firm's point of view, the ideal world is one in which they can charge each consumer as much as possible without losing their business, and capture all the consumer surplus in the market. Again, this kind of activity is only possible if a firm has the "price setting" power that comes from monopoly status, or at least from significant barriers to switching.
+
+Most monopolies have not been able to engage in this kind of personalized pricing. Platform firms such as Uber have new opportunities in this area, because of the data they have about customer preferences, attributes, and behaviour.
+
+An analysis of Uber data from Chicago shows that:
+
+-   In the last five years, Uber has successfully increased consumer fares.
+
+-   Uber has engaged in surveillance pricing. One result is a higher price (for customers) for short trips, compared to longer trips.
+
+-   Beyond this bias to longer trips, there is still additional personalization of fares compared to a "distance and time" based "rate card" fare. This additional personalization is another source of revenue for Uber.
+
+-   Chicago does not publish what drivers are paid for trips, and so we are not able to analyze how the introduction of surveillance wages has affected Uber's bottom line and driver income, but the parallels with passenger experience suggests that this is another form of revenue for Uber.
+
+In short, the use of personalized pricing (fares and wages) is an important part of Uber's drive to profitability. It harms consumers and drivers, as Uber is able to take much of the "consumer surplus" from the exchange. Uber is only able to take these actions because it has limited competition in the market.
+
+Uber's surveillance pricing raises important topics for regulators:
+
+-   Fairness:
+
+-   Competition: Uber's surveillance pricing is an example of monopolistic behaviour.
+
+# Sources of profitability
+
+Len Sherman (an adjunct professor at Columbia Business School) has argued that Uber’s ridehail business had seen two big changes;[@lenshermanUberCEOHides2023]
+
+Increased fares for passengers
+
+Uber taking a bigger portion of the fare (its “take rate”), leaving drivers no better off (and potentially worse off).
+
+Hubert Horan suggests that “6-7% of Uber’s 11% net margin improvement appears to come from the algorithmic price discrimination changes and the service cutbacks that allowed it to increasing its take rate from 22% to 28-29%. The balance appears to reflect the elimination of the costs associated with hopeless markets and businesses.”[@smithHubertHoranCan2023]
+
+Horan argues that the increased take rate was made possible by individualized fares, which decoupled driver compensation from passenger fares, and by focusing service on the busier parts of major cities (providing better total revenue per driver) rather than the outlying areas and suburbs that had been a bit part of its public service play in earlier years.
+
+Individualized fares were introduced by Uber under the name “upfront pricing”. They are “upfront” in the sense that a passenger is provided with a (more) fixed fare for their trip, but not upfront in how that number is arrived at. Numerous reports have suggested that these fares may be different for different individuals, perhaps based on personal factors such as their trip histories. The US Federal Trade Commission has called the practice of setting prices based on an individual’s history and personal attributes “surveillance pricing”.
+
+More recently, Uber has introduced “upfront fares” in many US cities. This is the practice of offering individualized pay to a driver for a trip (again, specifying the amount “up front”). This practice has been called “algorithmic wage discrimination” by law professor Veena Dubal. Here we call them “surveillance wages”.
+
+The City of Chicago provides some trip-level data, including fares, times, and distances. Does this data tell us anything about whether these claims hold up?
 
 ```{r}
 #| label: setup
 #| echo: false
-librarian::shelf(tidyverse, lubridate, ggplot2, 
-                 ggthemes, RColorBrewer, janitor, RPostgres)
+librarian::shelf(tidyverse, janitor, RColorBrewer, RPostgres)
 
 update_geom_defaults("line", aes(linewidth=1.5, alpha=1.0))
 update_geom_defaults("point", aes(size=2, fill="Steel Blue", alpha=1.0))
 # AWS
 # The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
 con <- dbConnect(RPostgres::Postgres(),
-                    host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
-                    port=5432,
-                    dbname="postgres",
-                    user="rhreader")
+                 host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
+                 port=5432,
+                 dbname="postgres",
+                 user="rhreader")
 ```
 
 ```{r}
 #| label: overview
 #| echo: false
+#| fig-cap: "Total number of recorded trips in the data set. June 2019 is an anomaly."
+#| fig-scap: "Trip counts"
 sql <- {"select 
   to_date(year || '-' || month || '-01', 'YYYY-MM-DD') as trip_date, 
   trips
@@ -47,9 +128,10 @@ p <- ggplot(data=tb_sql, aes(x=trip_date, y=trips,
                              colour="dummy"))
 p + 
   #facet_wrap(vars(measure), scales="free") +
-  geom_point() +
-  labs(title="TNC trips per month in Chicago",
-       subtitle="Trips on the first Thursday of the month",
+  geom_line() +
+  labs(title="Chicago TNC recorded trips for the first Thursday of the month",
+       subtitle="Recorded trips on the first Thursday of the month",
+       caption="The low count in June 2019 is an error in the original data set",
          x="Date",
          y="Trips") + 
   scale_y_continuous(limits=c(0, NA)) +
@@ -57,14 +139,136 @@ p +
   scale_colour_brewer(palette = "Dark2")
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+# Modeling traffic
 
-# One Community Area
+```{r}
+#| label: trip_stats
+#| echo: false
+#| fig-cap: "Sample statistics for trips in Chicago"
+#| fig-scap: "Sample statistics"
+pickup_community_area_list = list(0)
+index = 0
+for(pickup_community_area in pickup_community_area_list){
+  index = index + 1
+  sql <- {"select pickup_community_area, 
+    model_date,
+  	cast(trip_count as numeric) as trip_count, 
+  	mean_trip_miles,
+  	mean_trip_minutes, 
+  	mean_fare
+  	--coeff_per_mile,
+  	--coeff_per_minute,
+  	--coeff_intercept,
+  	--rse
+  	from ridehail.trip_model
+  	where pickup_community_area = $1
+    and model_type = 'zero'"
+  } 
+  rs <- dbSendQuery(con,sql)
+  dbBind(rs, list(pickup_community_area))
+  tb_tmp <- as_tibble(dbFetch(rs, n=-1))
+  dbClearResult(rs)
+  if(index > 1){
+    tb <- union(tb, tb_tmp)
+  } else {
+    tb <- tb_tmp
+  }
+}
 
-Detailed look at one community area
+#trip_count,coeff_per_mile,coeff_per_minute,coeff_intercept,rse,mean_trip_miles,mean_trip_minutes,mean_fare
+                 
+tb <- tb %>%
+  pivot_longer(!c(pickup_community_area, 
+                  model_date),
+               names_to="category", values_to="measure"
+               ) 
+
+p <- ggplot(data=tb, 
+            mapping=aes(x=model_date, 
+                        y=measure, 
+                        colour=as.factor(pickup_community_area)),
+                        fill=as.factor(pickup_community_area))
+
+p +
+  facet_wrap(vars(category), scales = "free_y") +
+  geom_line() +
+  #geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title="Chicago ridehail trends",
+       x="Date",
+       y="value",
+       colour="Pickup Community Area") +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+Fitting across the city
+
+```{r}
+#| label: model fit
+#| echo: false
+#| fig-cap: "Long caption"
+#| fig-scap: "Short caption"
+pickup_community_area_list = list(0)
+index = 0
+for(pickup_community_area in pickup_community_area_list){
+  index = index + 1
+  sql <- {"select pickup_community_area, 
+    model_date,
+  	-- cast(trip_count as numeric) as trip_count, 
+  	-- mean_trip_miles,
+  	-- mean_trip_minutes, 
+  	-- mean_fare,
+  	coeff_per_mile,
+  	coeff_per_minute,
+  	-- coeff_intercept,
+  	rse
+  	from ridehail.trip_model
+  	where pickup_community_area = $1
+    and model_type = 'zero'"
+  } 
+  rs <- dbSendQuery(con,sql)
+  dbBind(rs, list(pickup_community_area))
+  tb_tmp <- as_tibble(dbFetch(rs, n=-1))
+  dbClearResult(rs)
+  if(index > 1){
+    tb <- union(tb, tb_tmp)
+  } else {
+    tb <- tb_tmp
+  }
+}
+
+#trip_count,coeff_per_mile,coeff_per_minute,coeff_intercept,rse,mean_trip_miles,mean_trip_minutes,mean_fare
+                 
+tb <- tb %>%
+  pivot_longer(!c(pickup_community_area, 
+                  model_date),
+               names_to="category", values_to="measure"
+               ) 
+
+p <- ggplot(data=tb, 
+            mapping=aes(x=model_date, 
+                        y=measure, 
+                        colour=as.factor(pickup_community_area)),
+                        fill=as.factor(pickup_community_area))
+
+p +
+  facet_wrap(vars(category), scales="free_y",  ncol=2) +
+  geom_line() +
+  #geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title="Chicago ridehail model trends",
+       x="Date",
+       y="value",
+       colour="Pickup Community Area") +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2")
+```
 
 # Model results
 
-The apparent small number of trips in June 2019 is a data collection artifact: many of the trips recorded on that
-date are missing the trip duration, and so cannot be included in the study.
+The apparent small number of trips in June 2019 is a data collection artifact: many of the trips recorded on that date are missing the trip duration, and so cannot be included in the study.
 
+# References
