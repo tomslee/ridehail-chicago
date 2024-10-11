@@ -1,10 +1,11 @@
 ---
-title: The trouble with "upfront" prices
+title: The trouble with "upfront" pricing
 title-block-banner: true
 author: 
   - name: "RideFairTO"
     url: https://ridefair.ca/
 date: last-modified
+date-format: long
 description: >
   Uber just introduced "upfront pricing for drivers" in Canada. But
   "black box pricing" would be a better term.
@@ -18,6 +19,9 @@ bibliography: references.bib
 toc: true
 toc-depth: 2
 toc-title: Contents
+knitr:
+  opts_chunk:
+    out.width: "75%"
 number-sections: true
 number-depth: 1
 callout-appearance: default
