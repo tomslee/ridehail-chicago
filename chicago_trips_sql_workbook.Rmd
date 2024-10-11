@@ -23,7 +23,7 @@ No text needed here.
 librarian::shelf(tidyverse, knitr, reshape2, ggtext, 
                  jsonlite, stringr, lubridate, scales, 
                  ggthemes, RColorBrewer, viridis, vroom,
-                 janitor, RPostgres, pals
+                 janitor, RPostgres, pals, ggh4x
                  )
 
 knitr::opts_knit$set(echo = FALSE)
@@ -835,6 +835,49 @@ p +
   scale_fill_brewer(palette="Dark2") +
   scale_colour_brewer(palette="Dark2")
 
+```
+
+```{r fig-win-loss, echo=FALSE}
+target_year = 2022
+target_month = 6
+sql <- {"select dense_rank() over (order by upfront_added) as trip_index,
+fare, time_and_distance_fare, upfront_added 	
+from
+(select f.year, f.month, fare, 
+	(coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes) as time_and_distance_fare,
+	fare - (coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes) as upfront_added
+from ridehail.trip_fares f inner join ridehail.trip_model m
+on f.year = m.year and f.month = m.month
+where m.pickup_community_area = 0
+and m.model_type = 'zero'
+and f.year = $1 and f.month = $2 ) as T
+order by trip_index;"}
+
+rs <- dbSendQuery(con,sql)
+dbBind(rs, list(target_year, target_month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+p <- ggplot(data=tb, #%>% mutate(fare_date=as.Date(sprintf("%s-%s-01", year, month))), 
+            mapping=aes(x=trip_index, 
+                        y=upfront_added,
+                        colour="dummy"))
+
+p +
+  geom_line() +
+  stat_difference(aes(ymin = 0, ymax = upfront_added)) +
+  # geom_col(position = "dodge", alpha=0.7) +
+  labs(title=sprintf("Chicago fare distributions for %s %s", month.name[target_month], target_year),
+       x="Trip index",
+       y="Upfront added") +
+  scale_y_continuous(limits=c(-20, +20)) + # , trans='log10') +
+  theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  #scale_fill_manual(values=as.vector(pals::alphabet())) +
+  #scale_colour_manual(values=as.vector(pals::alphabet()))
+  scale_colour_brewer(palette="Dark2") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
 ```
 
 
