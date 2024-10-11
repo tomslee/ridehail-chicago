@@ -3,5 +3,8 @@
 .RData
 .Ruserdata
 *.html
+*.pdf
+*.tex
 data/Transportation_Network_Providers_-_Drivers.csv
 data/trip_aggregates_20*.csv
+data/trip_aggregates_new.csv

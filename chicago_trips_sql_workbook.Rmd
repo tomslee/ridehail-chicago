@@ -23,7 +23,7 @@ No text needed here.
 librarian::shelf(tidyverse, knitr, reshape2, ggtext, 
                  jsonlite, stringr, lubridate, scales, 
                  ggthemes, RColorBrewer, viridis, vroom,
-                 janitor, RPostgres
+                 janitor, RPostgres, pals
                  )
 
 knitr::opts_knit$set(echo = FALSE)
@@ -73,8 +73,8 @@ Portal](https://data.cityofchicago.org/Transportation/Transportation-Network-Pro
     Chicago on Sept 2022.
 
 ```{r upfront-parameters, echo=FALSE}
-years <- 2019:2024
-months <- list(2, 6, 10)
+years <- 2020
+months <- list(4, 8, 12)
 first_thursday_list_feb <- list("2019-02-07", 
                             "2020-02-06", 
                             "2021-02-04", 
@@ -113,11 +113,12 @@ are built from a cleaned data set accessed through the view
 are important for the models.
 
 ```{r model, eval=FALSE, echo=FALSE}
-pickup_community_area_list = list(4, 8, 12)
-years <- 2019:2024
-months <- list(2, 6, 10)
-#model_type <- "lm"
-model_type <- "zero"
+pickup_community_area_list = list(0)
+years <- list(2024)
+months <- list(4, 8)
+# model_type <- "zero"
+# model_type <- "lm"
+model_type <- "zero40"
 
 if (pickup_community_area_list[[1]] == 0){
     sql <- {"select 0 as pickup_community_area, year, month, trip_id, trip_miles, 
@@ -126,14 +127,14 @@ if (pickup_community_area_list[[1]] == 0){
   	where year = $1 and month = $2"
     } 
   sql_agg <- {"select 0 as pickup_community_area,
-    trip_start_timestamp::date as model_date,
+    trip_start_timestamp::date as model_date, year,	month,
   	count(*) as trip_count, 
   	avg(trip_miles) as mean_trip_miles,
   	avg(trip_minutes) as mean_trip_minutes, avg(fare) as mean_fare,
   	avg(fare + additional_charges) as mean_total_fare
     from ridehail.trip_fares
   	where year = $1 and month = $2
-    group by 1, model_date"
+    group by 1, model_date, year, month"
   } 
 } else {
   sql <- {"select pickup_community_area, year, month, trip_id, trip_miles,
@@ -144,7 +145,7 @@ if (pickup_community_area_list[[1]] == 0){
     } 
   
   sql_agg <- {"select pickup_community_area, 
-    trip_start_timestamp::date as model_date,
+    trip_start_timestamp::date as model_date, year, month,
   	count(*) as trip_count, 
   	avg(trip_miles) as mean_trip_miles,
   	avg(trip_minutes) as mean_trip_minutes, avg(fare) as mean_fare,
@@ -152,7 +153,7 @@ if (pickup_community_area_list[[1]] == 0){
     from ridehail.trip_fares
   	where pickup_community_area = $1
   	and year = $2 and month = $3
-    group by pickup_community_area, model_date"} 
+    group by pickup_community_area, model_date, year, month"} 
 }
 
 for (pickup_community_area in pickup_community_area_list){
@@ -178,12 +179,16 @@ for (pickup_community_area in pickup_community_area_list){
         }
         tb_sql <- as_tibble(dbFetch(rs, n=-1))
         dbClearResult(rs)
+        
         if(nrow(tb_sql) > 0){
           if (model_type=="lm"){
             model <- lm(fare ~ trip_miles + trip_minutes, data=tb_sql)
             coeff_intercept <- summary(model)$coefficients["(Intercept)", "Estimate"]
           } else if (model_type=="zero"){
             model <- lm(fare ~ 0 + trip_miles + trip_minutes, data=tb_sql)
+            coeff_intercept <- 0.0
+          } else if (model_type=="zero40") {
+            model <- lm(fare ~ 0 + trip_miles + trip_minutes, data=tb_sql %>% filter(trip_miles<=40))
             coeff_intercept <- 0.0
           }
           # coeff_intercept[s_year] <- 0
@@ -197,17 +202,19 @@ for (pickup_community_area in pickup_community_area_list){
                    coeff_intercept=coeff_intercept,
                    rse=rse,
                    model_type=model_type,
-                   last_updated=Sys.time()) 
+                   last_updated=Sys.time())
+          ## Commented out in case I run this by mistake
           dbAppendTable(con, "trip_model", tb_result)
         }
-        print(sprintf("completed model for CA %s on %s-%s", 
-                      pickup_community_area, this_year, this_month))
+        print(tb_result)
     }
   }
 }
 ```
 
-# Analysis: Chicago Overview
+# Analysis: Chicago overview
+
+Testing the data set by the total number of trips each day. It is similar enough to the accurate numbers recorded elsewhere.
 
 ```{r fare_model, echo=FALSE}
 sql <- {"select 
@@ -231,7 +238,8 @@ p +
   geom_line() +
   labs(title="TNC recorded trips with non-zero time recorded, per month in Chicago",
        subtitle="Trips on the first Thursday of the month",
-       caption="The low June 2019 number is a data collection artifact:many trips are missing the trip_seconds field",
+       caption={"The low June 2019 number is a data collection artifact: 
+         many trips in the Chicago data set are missing the trip_seconds field for that month"},
          x="Date",
          y="Recorded Trips") + 
   scale_y_continuous(limits=c(0, NA)) +
@@ -299,7 +307,7 @@ p +
   scale_colour_brewer(palette="Dark2")
 ```
 
-## Plotting errors directly
+## A second approach: plotting errors directly
 
 ```{r plot_experiment_2, echo=FALSE}
 # Another way of plotting errors
@@ -449,8 +457,8 @@ tb <- tb %>%
 p <- ggplot(data=tb, 
             mapping=aes(x=model_date, 
                         y=measure, 
-                        colour=model_type),
-                        fill=model_type)
+                        colour="dummy"),
+                        fill="dummy")
 
 
 p +
@@ -528,7 +536,7 @@ p +
        x="Date",
        y="value",
        colour="Pickup Community Area") +
-  theme(legend.position="none") +
+  # theme(legend.position="none") +
   scale_y_continuous(limits=c(0, NA)) +
   theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2")
@@ -551,7 +559,7 @@ from
 	on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
 	and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
 	where ridehail.trip_model.pickup_community_area = 0
-	and ridehail.trip_model.model_type = 'zero'
+	and ridehail.trip_model.model_type = 'zero40'
 	and ridehail.trip_fares.trip_miles < 40
 	and trip_minutes > 0) as T
 group by bin_max, model_date
@@ -648,7 +656,7 @@ Are there patterns we can pick out? The absence of patterns based on obvious glo
 surveillance.
 
 ```{r rse_1, echo=FALSE}
-pickup_community_area=8
+pickup_community_area=32
 year=2024
 month=6
 sql <- {"select trip_id, date_part('hour', trip_start_timestamp::time) as hour, trip_miles, trip_minutes, fare, 
@@ -732,4 +740,185 @@ p +
   # theme(legend.position="none") +
   # theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2")
+```
+
+## Deviations from models
+
+```{r, deviation, echo=FALSE}
+
+month = 2
+sql <- {"with T1 as (select model_date, ridehail.trip_fares.year as year, ridehail.trip_fares.month as month, 
+	trip_miles, trip_minutes, fare, coeff_per_mile, coeff_per_minute,
+	(coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes) as best_fit_fare
+	from ridehail.trip_fares inner join ridehail.trip_model
+		on ridehail.trip_fares.year = ridehail.trip_model.year  
+		and ridehail.trip_fares.month = ridehail.trip_model.month
+	where ridehail.trip_model.pickup_community_area = 0
+	and ridehail.trip_model.model_type = 'zero'
+	and ridehail.trip_fares.fare > 1
+	and ridehail.trip_fares.trip_miles < 60 )
+select model_date, deviation_percent_bin, trips_in_bin, 
+	(100.0 * trips_in_bin / (sum(trips_in_bin) over (partition by (model_date)))) as trip_percent_in_bin
+from
+	( select model_date, deviation_percent_bin, count(*) trips_in_bin
+	from
+	(select model_date, year, month, trip_miles, trip_minutes, fare, best_fit_fare, 
+		round(100 * (fare - best_fit_fare)/best_fit_fare) as deviation_percent,
+		10 * round(10 * (fare - best_fit_fare)/best_fit_fare) as deviation_percent_bin
+	from T1 ) as T2
+	group by model_date, deviation_percent_bin ) as T3
+order by model_date, deviation_percent_bin;"}
+
+rs <- dbSendQuery(con,sql)
+#dbBind(rs, list(year, month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+p <- ggplot(data=tb %>% filter(month(model_date) == month) %>% mutate_at(vars(model_date), factor), 
+            mapping=aes(x=deviation_percent_bin, 
+                        y=trip_percent_in_bin, 
+                        colour=model_date))
+p +
+  geom_line() +
+  labs(title=sprintf("Chicago ridehail trends: deviations for each %s", month),
+       subtitle="If deviations come from global demand/traffic trends, there would be time-based differences.",
+       #caption="What does the bin-based difference tell us? That the fit over-corrects on time?",
+       x="Deviation (% of predicted trip fare)",
+       y="Percent of trips") +
+  scale_x_continuous(limits=c(-100, +100)) + # , trans='log10') +
+  # theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  # scale_colour_tableau(palette = "Hue Circle")
+  scale_colour_manual(values=as.vector(pals::alphabet()))
+```
+# Fare variation
+
+```{r fig-fare-variation, echo=FALSE}
+target_month = 6
+sql <- {"select year, month, bin, trips_in_bin,
+	(100.0 * trips_in_bin / (sum(trips_in_bin) over (partition by (year, month)))) as trip_percent_in_bin
+from
+(select year, month, bin, count(*) as trips_in_bin
+from
+	(select year, month, fare, round(fare /10) * 10 as bin
+	from ridehail.trip_fares
+	where fare > 0) as T
+group by year, month, bin) as T2
+order by year, month, bin;"}
+
+rs <- dbSendQuery(con,sql)
+#dbBind(rs, list(year, month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+p <- ggplot(data=tb %>% 
+              filter(month == target_month,
+                     bin <= 50) %>% 
+              mutate(fare_date=as.Date(sprintf("%s-%s-01", year, month))), 
+            mapping=aes(x=as.factor(bin), 
+                        y=trip_percent_in_bin, 
+                        colour=as.factor(year),
+                        fill=as.factor(year)))
+p +
+  #geom_line() +
+  geom_col(position = "dodge", alpha=0.7) +
+  labs(title=sprintf("Chicago fare distributions for each %s", month.name[target_month]),
+       x="Fare bin (mid-point)",
+       y="Percent of trips",
+       colour="Year",
+       fill="Year") +
+  # scale_x_discrete(limits=c(0, +100)) + # , trans='log10') +
+  # theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  #scale_fill_manual(values=as.vector(pals::alphabet())) +
+  #scale_colour_manual(values=as.vector(pals::alphabet()))
+  scale_fill_brewer(palette="Dark2") +
+  scale_colour_brewer(palette="Dark2")
+
+```
+
+
+# Plotting supply and demand
+
+
+```{r, monopoly, echo=FALSE}
+f_supply <- function(x){
+  x
+}
+f_demand <- function(x){
+  10 - x
+}
+mydata <- data.frame(x=seq(0,10, 0.5))
+mydata <- data.frame(x=seq(0, 10, 0.5),
+                    supply = sapply(mydata$x, FUN = f_supply),
+                    demand = sapply(mydata$x, FUN = f_demand))
+
+p <-  ggplot(mydata, aes(x=x, y = supply)) + xlim(0, 10)
+
+p + 
+  geom_function(fun = f_supply) +
+  geom_function(fun = f_demand) + 
+  labs(x="Quantity", y="Price") +
+  geom_ribbon(data=subset(mydata, x<=5), 
+              aes(ymin=5, ymax=demand), fill="red", alpha=0.2,) + 
+  geom_ribbon(data=subset(mydata, x<=2.5), 
+              aes(ymin=7.5, ymax=demand), fill="blue", alpha=0.2,) +
+  annotate("segment", x = 0, y = 5, xend = 5, yend = 5, linetype="dashed", color="red") +
+  annotate("segment", x = 5, y = 0, xend = 5, yend = 5, linetype="dashed", color="red")  +
+  annotate("segment", x = 0, y = 7.5, xend = 2.5, yend = 7.5, linetype="dashed", color="blue") +
+  annotate("segment", x = 2.5, y = 2.5, xend = 2.5, yend = 7.5, linetype="dashed", color="blue")  +
+  annotate("label", x = 9, y = 1, label = "Demand") + #, label.size=0) +
+  annotate("label", x = 9, y = 9, label = "Supply") +
+  annotate("label", x = 5, y = 5, hjust="left", label = "Competition", colour="red") +
+  annotate("label", x = 1.25, y = 6, hjust="left", label = "Consumer surplus\n(competition)", fill="white", colour="red") +
+  annotate("label", x = 2.5, y = 7.5, hjust="left", label = "Monopoly", colour="blue") +
+  annotate("label", x = 0.25, y = 8.5, hjust="left", label = "Consumer surplus\n(monopoly)", colour="blue") +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank())
+```
+
+# Additional charges
+
+```{r additional-charges, echo=FALSE}
+sql <- {"select 
+to_date(year || '-' || month || '-01', 'YYYY-MM-DD') as trip_date,
+fare, fare_plus_charges, modal_additional_charge, additional_charges, avg_a_over_f, avg_a_over_avg_f from
+(select year, month, avg(fare) as fare, avg(fare + additional_charges) as fare_plus_charges, 
+  avg(additional_charges) as additional_charges, 
+  mode() within group (order by additional_charges) as modal_additional_charge,
+  avg(additional_charges/fare) as avg_a_over_f,
+  avg(additional_charges)/avg(fare) as avg_a_over_avg_f
+  from ridehail.trip_fares
+group by year, month) as T"}
+
+rs <- dbSendQuery(con,sql)
+#dbBind(rs, list(year, month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+tb_plot <- tb %>% pivot_longer(!trip_date,
+               names_to="category", values_to="measure"
+               ) 
+
+p <- ggplot(data=tb_plot, 
+            mapping=aes(x=trip_date, 
+                        y=measure, 
+                        colour=category))
+p +
+  facet_wrap(vars(category), scales="free") +
+  geom_line() +
+  labs(title="Chicago ridehail trends: additional charges",
+       caption={
+       "Additional charges are supposed to be mainly fixed charges, not proportional to the fare,
+         yet they have been increasing along with fares"},
+       x="Date",
+       y="Value") +
+  # scale_x_continuous(limits=c(-100, +100)) + # , trans='log10') +
+  theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2")
+```
+
 ```

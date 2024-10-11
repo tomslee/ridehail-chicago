@@ -7,3 +7,4 @@ This repo collects some summaries of that data which I find interesting, in the 
 ## Database
 
 Password is stored in the ".pgpass" local file (on Windows, %APPDATA%\postgresql\pgpass.conf)
+
