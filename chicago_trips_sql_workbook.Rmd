@@ -476,6 +476,48 @@ p +
   scale_colour_brewer(palette = "Dark2")
 ```
 
+
+## Mean and Median Fares
+
+
+```{r ca_aggregate_plot, echo=FALSE}
+mean_trip_miles = 6.112
+mean_trip_minutes = 18.260
+sql <- {"select year, month, avg(fare) as mean_fare,
+  percentile_cont(0.5) within group (order by fare) AS median_fare
+  from ridehail.trip_fares
+  group by year, month
+  order by year, month;"
+} 
+rs <- dbSendQuery(con,sql)
+# dbBind(rs, list(pickup_community_area))
+tb <- as_tibble(dbFetch(rs, n=-1))
+dbClearResult(rs)
+  
+
+p <- ggplot(data=tb %>% 
+              pivot_longer(!c(year, month),
+                           names_to="category", values_to="measure") %>%
+              mutate(fare_date=as.Date(sprintf("%s-%s-01", year, month))), 
+            mapping=aes(x=fare_date, 
+                        y=measure, 
+                        colour=category),
+                        fill="dummy")
+
+
+p +
+  # facet_wrap(vars(category), scales = "free_y") +
+  geom_line() +
+  labs(title="Chicago ridehail trends: mean and median fares",
+       x="Date",
+       y="Value ($)") +
+  theme(legend.position.inside="none") +
+  scale_y_continuous(limits=c(0, NA)) +
+  theme(legend.position = "inside", 
+        legend.position.inside=c(0.2, 0.8),
+        legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2")
+```
 # Analysis: model RSE and intercept etc
 
 ```{r ca_model_plot, echo=FALSE}

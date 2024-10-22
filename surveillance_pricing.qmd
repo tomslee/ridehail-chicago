@@ -4,16 +4,19 @@ title-block-banner: true
 author: 
   - name: "RideFairTO"
     url: https://ridefair.ca/
+    email: info@ridefair.ca
 date: last-modified
 date-format: long
 description: >
-  Uber just introduced "upfront pricing for drivers" in Canada. But
+  Uber just introduced "upfront pricing for drivers" in Canada, but
   "black box pricing" would be a better term.
 abstract: >
-  Uber says that "upfront pricing" is about transparency and peace of 
-  mind, but data from Chicago shows that Uber has used "upfront pricing" 
-  to increase fares and to take more from each transaction by fine-tuning
-  prices for each trip.
+  Uber claims that "upfront pricing" is about transparency and peace of 
+  mind, but data from Chicago shows that Uber used "upfront pricing 
+  for riders" to increase fares and to take more from each transaction by 
+  fine-tuning prices for each trip. Now the other shoe has dropped, as
+  Uber has introduced "upfront pricing for drivers" in Canada, and there 
+  can be little doubt it will be used to drive down driver earnings. 
 appendix-style: none
 bibliography: references.bib
 toc: true
@@ -21,7 +24,7 @@ toc-depth: 2
 toc-title: Contents
 knitr:
   opts_chunk:
-    out.width: "70%"
+    out.width: "80%"
 number-sections: false
 number-depth: 1
 callout-appearance: default
@@ -39,7 +42,9 @@ format:
   PrettyPDF-pdf:
     colorlinks: true
     keep-tex: true
-editor: visual
+    mainfont: "CharterBT-Roman"
+    linestretch: 1.1
+# editor: visual
 ---
 
 ```{r}
@@ -47,7 +52,7 @@ editor: visual
 #| echo: false
 #| include: false
 librarian::shelf(tidyverse, janitor, RColorBrewer, RPostgres, patchwork)
-update_geom_defaults("line", aes(alpha=1.0))
+update_geom_defaults("line", aes(linewidth=1.5, alpha=1.0))
 update_geom_defaults("point", aes(size=2, alpha=1.0))
 # The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
 con <- dbConnect(RPostgres::Postgres(),
@@ -60,7 +65,9 @@ con <- dbConnect(RPostgres::Postgres(),
 
 # Uber increased fares in 2021 and has kept them higher
 
-Chicago is one of the few cities to make ridehail data available. All the charts here are taken from Chicago's data sets, using the first Thursday of every other month as a sample.
+Uber just introduced "upfront pricing for drivers" in Canada, replacing time-and-distance rates with algorithmically-determined pay for each trip. The price algorithm itself is hidden, so drivers do not know what factors are setting their pay, and Uber may well change it over time. 
+
+What can drivers expect from "upfront pricing"? Open data from Chicago, one of the few cities to make ridehail data available, shows how one of Uber's earlier initiatives, "upfront pricing for riders" affected fares.
 
 [@fig-trip-fare] shows the average fare for a trip, with ("Total Fare") and without additional charges such as the booking fee and tolls. Tips are not included. The trend for each is the same, so from here we can look at the fare without additional charges.
 
@@ -79,8 +86,8 @@ for(pickup_community_area in pickup_community_area_list){
   sql <- {"select pickup_community_area, 
     model_date,
   	-- cast(trip_count as numeric) as trip_count, 
-  	mean_total_fare as \"Average Total Fare ($)\",
-  	mean_fare as \"Average Fare ($)\"
+  	mean_total_fare as \"Average Total Fare\",
+  	mean_fare as \"Average Fare\"
   	-- mean_trip_miles as \"Average Distance (miles)\",
   	-- mean_trip_minutes as \"Average Time (mins)\" 
   	--coeff_per_mile,
@@ -111,7 +118,7 @@ tb <- tb %>%
                )
 
 tb$category = factor(tb$category, 
-                     levels=c("Average Total Fare ($)", "Average Fare ($)"))
+                     levels=c("Average Total Fare", "Average Fare"))
   
 p <- ggplot(data=tb, 
             mapping=aes(x=model_date, 
@@ -348,16 +355,15 @@ p <- p +
 p
 ```
 
+<!--
 # Upfront pricing and Uber's road to operating profit
 
-Operating profit or loss is, roughly, the everyday revenue of a company minus the everyday cost of running the company (so leaving out things like interest and investments). @fig-uber-operations is a chart of Uber's operating profit/loss, showing a steady improvement from 2021 onwards. What changes are behind this improvement?
-
-The continued improvement of Uber's financials as upfront pay for drivers has been rolled out in more markets is probably not a coincidence.
-
-
+Operating profit or loss is, roughly, the everyday revenue of a company minus the everyday cost of running the company (so leaving out things like interest and investments). @fig-uber-operations is a chart of Uber's operating profit/loss, showing a steady improvement from 2021 onwards, beginning at the same time upfront pricing for riders was introduced in the USA (which makes up roughly half of Uber's revenue).
+-->
 ```{r}
 #| label: fig-uber-operations
 #| echo: FALSE
+#| eval: FALSE
 #| fig-cap: Uber's operation profit/loss balance from 2019--2024
 
 ops <- c(-1.03,-5.49, -1.11, -0.97, -1.26, -1.61,
