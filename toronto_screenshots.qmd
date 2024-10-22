@@ -1,0 +1,124 @@
+---
+title: "Screenshots"
+author: "RDAO"
+format: revealjs
+---
+
+```{r}
+#| label: setup
+#| include: FALSE
+
+librarian::shelf(tidyverse, googlesheets4, janitor)
+ss = "1_jOPbHF2T3tm7a3jM3T0giYQgeqi7isB9JIH4hmtnqE"
+ss_id = as_sheets_id(ss)
+url = sprintf("https://docs.google.com/spreadsheets/d/%s/edit?gid=1094854580#gid=1094854580", ss)
+tb_ref <- read_sheet(ss=ss_id, range="Reference Values!A2:I5") %>% 
+  column_to_rownames(var="Metric") %>% 
+  t() %>%
+  as_tibble(rownames=NA) %>%
+  rownames_to_column(var="trip_type") %>%
+  clean_names()
+tb <- read_sheet(ss=ss_id, 
+                 sheet="Form Responses 1",
+                 na = c("0")) %>% 
+  clean_names() %>%
+  rename("upfront_offer" = "upfront_offer_amount_enter_0_if_not_shown",
+         "estimated_time" = "estimated_time_total_of_both_pickup_and_drop_off_mins",
+         "estimated_distance" = "estimated_distance_total_of_both_pickup_and_drop_off_distance_km",
+         "actual_trip_fare" = "actual_trip_fare_not_including_hst_enter_0_if_not_shown",
+         "actual_time" = "actual_trip_time_pickup_and_drop_off_time_minutes_seconds_enter_0_if_not_shown",
+         "actual_distance" = "actual_trip_distance_pickup_and_drop_off_distance_km_enter_0_if_not_shown",
+         "actual_earnings" = "actual_fare_payment_earnings_not_including_hst_enter_0_if_not_shown",
+         "actual_taxes" = "actual_hst_payment_enter_0_if_not_shown",
+         "image_file" = "image_file_name_no_extension_needed",
+         "tip" = "tips_enter_0_if_not_shown"
+         ) %>% 
+  mutate("estimated_time_decimal" = round(estimated_time) + (estimated_time %% 1) * 100 / 60,
+         "actual_time_decimal" = round(actual_time) + (actual_time %% 1) * 100 / 60) %>%
+  select(!c(old_fare_per_rate_card_pre_10_08_2024, difference_rate_card_actual)) %>%
+  inner_join(tb_ref, by="trip_type") %>%
+  mutate(estimated_rate_card_fare=0.75 * (base_fare + estimated_time_decimal * per_minute + estimated_distance * per_km),
+         actual_rate_card_fare=0.75 * (base_fare + actual_time_decimal * per_minute + actual_distance * per_km),
+         ) 
+```
+
+## Upfront vs rate card fare offers
+
+```{r}
+#| label: first-plot
+#| echo: FALSE
+
+
+x_max=100
+y_max=x_max
+
+tb_plot <-  tb %>% 
+  filter(trip_type=="UberX", date >= as.Date("2024-10-08"), estimated_distance > 0, estimated_time_decimal > 0) %>%
+  filter(estimated_rate_card_fare < x_max)
+
+p <- ggplot(data=tb_plot, 
+            aes(x=estimated_rate_card_fare, 
+                y=upfront_offer, 
+                colour="dummy"))
+
+p + 
+  geom_point() +
+  #geom_smooth() +
+  annotate("text", x=70, y=20, colour="red",
+           label=sprintf("DRAFT (%s)\nPLEASE DO NOT CIRCULATE", today())) +
+  annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
+           colour = "grey", linetype=2) +
+  labs(title=sprintf("Upfront offers and rate card estimates: %s UberX screenshots", nrow(tb_plot)),
+       x="Estimated rate card fare ($)",
+       y="Upfront fare offer ($)",
+      caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
+  scale_x_continuous(limits=c(0, x_max)) +
+  scale_y_continuous(limits=c(0, y_max)) +
+  theme(legend.position="none",
+        plot.title=element_text(hjust=0),
+        plot.subtitle=element_text(hjust=0),
+        plot.caption = element_text(hjust=0)) +
+  scale_colour_brewer(palette = "Dark2") 
+  # scale_colour_brewer(palette="BuPu") 
+```
+
+## A closer look at shorter trips
+
+```{r}
+#| label: plot-zoom
+#| echo: FALSE
+
+x_max=20
+y_max=x_max
+
+tb_plot <-  tb %>% 
+  filter(trip_type=="UberX", date >= as.Date("2024-10-08"), estimated_distance > 0, estimated_time_decimal > 0) %>%
+  filter(estimated_rate_card_fare < x_max)
+
+p <- ggplot(data=tb_plot, 
+            aes(x=estimated_rate_card_fare, 
+                y=upfront_offer, 
+                colour="dummy"))
+
+p + 
+  geom_point() +
+  #geom_smooth() +
+  annotate("text", x=14, y=5, colour="red",
+           label=sprintf("DRAFT (%s)\nPLEASE DO NOT CIRCULATE", today())) +
+  annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
+           colour = "grey", linetype=2) +
+  labs(title=sprintf("Upfront offers and rate card estimates: %s UberX screenshots", nrow(tb_plot)),
+       x="Estimated rate card fare ($)",
+       y="Upfront fare offer ($)",
+      caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
+  scale_x_continuous(limits=c(0, x_max)) +
+  scale_y_continuous(limits=c(0, y_max)) +
+  theme(legend.position="none",
+        plot.title=element_text(hjust=0),
+        plot.subtitle=element_text(hjust=0),
+        plot.caption = element_text(hjust=0)) +
+  scale_colour_brewer(palette = "Dark2") 
+```
+
+
+
