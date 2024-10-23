@@ -22,26 +22,27 @@ tb_ref <- read_sheet(ss=ss_id, range="Reference Values!A2:I5") %>%
   clean_names()
 tb <- read_sheet(ss=ss_id, 
                  sheet="Form Responses 1",
-                 na = c("0")) %>% 
+                 na = c("0", "0.0", "0.00")) %>% 
   clean_names() %>%
   rename("upfront_offer" = "upfront_offer_amount_enter_0_if_not_shown",
          "estimated_time" = "estimated_time_total_of_both_pickup_and_drop_off_mins",
          "estimated_distance" = "estimated_distance_total_of_both_pickup_and_drop_off_distance_km",
-         "actual_trip_fare" = "actual_trip_fare_not_including_hst_enter_0_if_not_shown",
+         "actual_earnings" = "actual_fare_payment_earnings_not_including_hst_enter_0_if_not_shown",
          "actual_time" = "actual_trip_time_pickup_and_drop_off_time_minutes_seconds_enter_0_if_not_shown",
          "actual_distance" = "actual_trip_distance_pickup_and_drop_off_distance_km_enter_0_if_not_shown",
-         "actual_earnings" = "actual_fare_payment_earnings_not_including_hst_enter_0_if_not_shown",
-         "actual_taxes" = "actual_hst_payment_enter_0_if_not_shown",
          "image_file" = "image_file_name_no_extension_needed",
          "tip" = "tips_enter_0_if_not_shown"
          ) %>% 
-  mutate("estimated_time_decimal" = round(estimated_time) + (estimated_time %% 1) * 100 / 60,
-         "actual_time_decimal" = round(actual_time) + (actual_time %% 1) * 100 / 60) %>%
-  select(!c(old_fare_per_rate_card_pre_10_08_2024, difference_rate_card_actual)) %>%
+  distinct(upfront_offer, estimated_time, estimated_distance, actual_earnings, actual_time, actual_distance, .keep_all = TRUE) %>%
+  mutate(estimated_time_decimal = round(estimated_time) + (estimated_time %% 1) * 100 / 60,
+         actual_time_decimal = round(actual_time) + (actual_time %% 1) * 100 / 60) %>%
   inner_join(tb_ref, by="trip_type") %>%
   mutate(estimated_rate_card_fare=0.75 * (base_fare + estimated_time_decimal * per_minute + estimated_distance * per_km),
          actual_rate_card_fare=0.75 * (base_fare + actual_time_decimal * per_minute + actual_distance * per_km),
+         upfront_diff = upfront_offer - estimated_rate_card_fare
          ) 
+# Uncomment to upload the cleaned data to the Google Sheet.
+# tb %>% write_sheet(ss=ss_id, sheet="Cleaned")
 ```
 
 ---
@@ -53,7 +54,7 @@ tb <- read_sheet(ss=ss_id,
 x_max=100
 y_max=x_max
 
-tb_plot <-  tb %>% 
+tbp <-  tb %>% 
   filter(trip_type=="UberX", 
          date >= as.Date("2024-10-08"),
          estimated_distance > 0, 
@@ -61,24 +62,77 @@ tb_plot <-  tb %>%
          upfront_offer > 0) %>%
   filter(estimated_rate_card_fare < x_max)
 
-p <- ggplot(data=tb_plot, 
+p <- ggplot(data=tbp, 
             aes(x=estimated_rate_card_fare, 
-                y=upfront_offer, 
+                y=upfront_diff, 
                 colour="dummy"))
 
 p + 
   geom_point() +
-  #geom_smooth() +
-  annotate("text", x=70, y=20, colour="red",
-           label=sprintf("Preliminary results", today())) +
-  annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
-           colour = "grey", linetype=2) +
-  labs(title=sprintf("Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tb_plot)),
+  geom_smooth(method="lm", linewidth=1, linetype=2) +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=0, ymax=Inf, linewidth=0, fill="#1b9e77", alpha=0.15) +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, linewidth=0, fill="#d95f02", alpha=0.15) +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.5 * max(tbp$upfront_diff),
+           label="Upfront pays more") +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.7 * min(tbp$upfront_diff),
+           label="Upfront pays less") +
+  # geom_hline(yintercept=0, colour = "darkgrey") +
+  labs(title=sprintf("PRELIMINARY: Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tbp)),
        x="Estimated rate card fare ($)",
-       y="Upfront fare offer ($)",
+       y="Change from rate card to Upfront ($)",
       caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
-  scale_x_continuous(limits=c(0, x_max)) +
-  scale_y_continuous(limits=c(0, y_max)) +
+  theme(legend.position="none",
+        plot.title=element_text(hjust=0),
+        plot.subtitle=element_text(hjust=0),
+        plot.caption = element_text(hjust=0)) +
+  scale_colour_brewer(palette = "Dark2") 
+  # scale_colour_brewer(palette="BuPu") 
+```
+
+---
+
+```{r}
+#| label: distance-and-fares
+#| echo: FALSE
+
+x_max=100
+y_max=x_max
+
+tbp <-  tb %>% 
+  filter(trip_type=="UberX", 
+         date >= as.Date("2024-10-08"),
+         estimated_distance > 0, 
+         estimated_time_decimal > 0,
+         upfront_offer > 0) %>%
+  filter(estimated_rate_card_fare < x_max)
+
+p <- ggplot(data=tbp, 
+            aes(x=estimated_distance, 
+                y=upfront_diff, 
+                colour="dummy",
+                label=comments))
+
+p + 
+  geom_point() +
+  # geom_text(colour="black", size=3) +
+  geom_smooth(method="lm", linewidth=0.5, linetype=2, se=FALSE) +
+  # geom_hline(yintercept=0.0, colour="darkgrey") +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=0, ymax=Inf, linewidth=0, fill="#1b9e77", alpha=0.15) +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, linewidth=0, fill="#d95f02", alpha=0.15) +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.5 * max(tbp$upfront_diff),
+           label="Upfront pays more") +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.7 * min(tbp$upfront_diff),
+           label="Upfront pays less") +
+  labs(title=sprintf("PRELIMINARY: Upfront offers and trip distances (%s UberX screenshots)", nrow(tbp)),
+       x="Estimated distance (km)",
+       y="Change from rate card to Upfront ($)",
+      caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
+  #scale_x_continuous(limits=c(0, x_max)) +
+  #scale_y_continuous(limits=c(0, NA)) +
   theme(legend.position="none",
         plot.title=element_text(hjust=0),
         plot.subtitle=element_text(hjust=0),
@@ -96,32 +150,37 @@ p +
 x_max=20
 y_max=x_max
 
-tb_plot <-  tb %>% 
+tbp <-  tb %>% 
   filter(trip_type=="UberX", 
          date >= as.Date("2024-10-08"),
          estimated_distance > 0, 
          estimated_time_decimal > 0,
+         estimated_distance < x_max,
          upfront_offer > 0) %>%
   filter(estimated_rate_card_fare < x_max)
 
-p <- ggplot(data=tb_plot, 
-            aes(x=estimated_rate_card_fare, 
-                y=upfront_offer, 
+p <- ggplot(data=tbp, 
+            aes(x=estimated_distance, 
+                y=upfront_diff, 
                 colour="dummy"))
 
 p + 
   geom_point() +
   #geom_smooth() +
-  annotate("text", x=0.7 * x_max, y=0.2 * y_max, colour="red",
-           label=sprintf("Preliminary results (%s)", today())) +
-  annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
-           colour = "grey", linetype=2) +
-  labs(title=sprintf("Upfront offers and rate card estimates for short trips (%s UberX screenshots)", nrow(tb_plot)),
-       x="Estimated rate card fare ($)",
-       y="Upfront fare offer ($)",
+  # geom_hline(yintercept=0.0, colour = "darkgrey") +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=0, ymax=Inf, linewidth=0, fill="#1b9e77", alpha=0.15) +
+  annotate("rect", xmin=-Inf, xmax=Inf, ymin=-Inf, ymax=0, linewidth=0, fill="#d95f02", alpha=0.15) +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.5 * max(tbp$upfront_diff),
+           label="Upfront pays more") +
+  annotate("label", x=0.1 * max(tbp$estimated_distance),
+           y=0.5 * min(tbp$upfront_diff),
+           label="Upfront pays less") +
+  labs(title=sprintf("PRELIMINARY: Upfront change for short trips (%s UberX screenshots)", nrow(tbp)),
+       x="Estimated distance (km)",
+       y="Change from rate card to Upfront ($)",
       caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
   scale_x_continuous(limits=c(0, x_max)) +
-  scale_y_continuous(limits=c(0, y_max)) +
   theme(legend.position="none",
         plot.title=element_text(hjust=0),
         plot.subtitle=element_text(hjust=0),
@@ -159,13 +218,13 @@ model_upfront_0 <- lm(upfront_offer ~ 0 + estimated_rate_card_fare, data=tb_mode
 coeff_rate_card <- model_upfront$coefficients[["estimated_rate_card_fare"]]
 intercept <- model_upfront$coefficients[["(Intercept)"]]
 intercept = 0
-tb_plot <- tb_model %>%
+tbp <- tb_model %>%
   mutate("best_fit"= estimated_rate_card_fare * coeff_rate_card + intercept,
          "upfront_over_estimated" = upfront_offer / estimated_rate_card_fare,
          "trip_length" = ifelse(estimated_distance < distance_cutoff, "less than 10km", "10km or more"))
   #pivot_longer(cols=c("upfront_offer", "best_fit"), names_to=c("category"))
 
-p <- ggplot(data=tb_plot, 
+p <- ggplot(data=tbp, 
             aes(x=upfront_over_estimated, 
                 colour=trip_length,
                 fill=trip_length))
@@ -173,7 +232,15 @@ p <- ggplot(data=tb_plot,
 p + 
   geom_histogram(binwidth=0.05, position="dodge", width=0.8, alpha=0.5) +
   # geom_density(binwidth=0.05, width=0.8, alpha=0.5) +
-    labs(title=sprintf("Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tb_plot)),
+  annotate("rect", xmin=1, xmax=Inf, ymin=-Inf, ymax=Inf, linewidth=0, fill="#1b9e77", alpha=0.15) +
+  annotate("rect", xmin=-Inf, xmax=1, ymin=-Inf, ymax=Inf, linewidth=0, fill="#d95f02", alpha=0.15) +
+  annotate("label", x=0.8 * max(tbp$upfront_over_estimated),
+           y=25,
+           label="Upfront\npays more") +
+  annotate("label", x=0.1 * min(tbp$upfront_over_estimated),
+           y=25, hjust=0,
+           label="Upfront\npays less") +
+  labs(title=sprintf("PRELIMINARY: Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tbp)),
        subtitle=sprintf("Data set includes offers with estimated distance between %s km and %s km", distance_min, distance_max),
        x="Upfront / rate card",
        y="Number of trips",
@@ -183,7 +250,7 @@ p +
         plot.title=element_text(hjust=0),
         plot.subtitle=element_text(hjust=0),
         plot.caption = element_text(hjust=0)) +
-  geom_vline(xintercept = 1, colour="darkgrey") +
+  #geom_vline(xintercept = 1, colour="darkgrey") +
   scale_x_continuous(limits=c(0, NA)) +
   scale_colour_brewer(palette = "Dark2") +
   scale_fill_brewer(palette="Dark2")
@@ -216,11 +283,11 @@ model_upfront_0 <- lm(upfront_offer ~ 0 + estimated_rate_card_fare, data=tb_mode
 coeff_rate_card <- model_upfront_0$coefficients[["estimated_rate_card_fare"]]
 # intercept <- model_upfront_0$coefficients[["(Intercept)"]]
 intercept = 0
-tb_plot <- tb_model %>%
+tbp <- tb_model %>%
   mutate("best_fit"= estimated_rate_card_fare * coeff_rate_card + intercept)# %>%
   #pivot_longer(cols=c("upfront_offer", "best_fit"), names_to=c("category"))
 
-p <- ggplot(data=tb_plot, 
+p <- ggplot(data=tbp, 
             aes(x=estimated_rate_card_fare, 
                 y=upfront_offer, 
                 colour="dummy"))
@@ -229,15 +296,13 @@ p +
   geom_point() +
   geom_line(aes(x=estimated_rate_card_fare, y=best_fit)) +
   # geom_smooth(method=lm) +
-  annotate("text", x=x_max * 0.7, y=0.2 * y_max, colour="red",
-           label=sprintf("Preliminary results (%s)", today())) +
   annotate("label", x=x_max*0.2, y=y_max*0.9,
            label=sprintf("Best fit line\nUpfront offer = %s%% of rate card estimate", 100 * round(coeff_rate_card, 2))) +
   annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
            colour = "grey", linetype=2) +
-  labs(title="Upfront offers and rate card estimates",
+  labs(title="PRELIMINARY: Upfront offers and rate card estimates",
        subtitle=sprintf("%s UberX screenshots with estimated distance between %s km and %s km",
-                        nrow(tb_plot), distance_min, distance_max),
+                        nrow(tbp), distance_min, distance_max),
        x="Estimated rate card fare ($)",
        y="Upfront fare offer ($)",
       caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
@@ -260,7 +325,7 @@ p +
 x_max=100
 y_max=x_max
 
-tb_plot <-  tb %>% 
+tbp <-  tb %>% 
   filter(trip_type=="UberXL", 
          date >= as.Date("2024-10-08"),
          estimated_distance > 0, 
@@ -268,7 +333,7 @@ tb_plot <-  tb %>%
          upfront_offer > 0) %>%
   filter(estimated_rate_card_fare < x_max)
 
-p <- ggplot(data=tb_plot, 
+p <- ggplot(data=tbp, 
             aes(x=estimated_rate_card_fare, 
                 y=upfront_offer, 
                 colour="dummy"))
@@ -276,11 +341,9 @@ p <- ggplot(data=tb_plot,
 p + 
   geom_point() +
   #geom_smooth() +
-  annotate("text", x=0.7 * x_max, y=0.2 * y_max, colour="red",
-           label=sprintf("Preliminary results (%s)", today())) +
   annotate("segment", x = 0, xend = x_max, y = 0, yend = x_max,
            colour = "grey", linetype=2) +
-  labs(title=sprintf("UberXL upfront offers and rate card estimates (%s screenshots)", nrow(tb_plot)),
+  labs(title=sprintf("PELIMINARY: UberXL upfront offers and rate card estimates (%s screenshots)", nrow(tbp)),
        x="Estimated rate card fare ($)",
        y="Upfront fare offer ($)",
       caption="Estimated rate card fare = 0.75 * ($0.35/min + $1.55/km + $5.67)\nPoints below the grey line show upfront offers lower than rate card would give.") + 
@@ -303,32 +366,35 @@ p +
 
 x_max=100
 y_max=x_max
-tb_plot <- tb %>% 
+tbp <- tb %>% 
   filter(trip_type=="UberX",
+         date >= as.Date("2024-10-08"),
+         estimated_time_decimal > 0,
          upfront_offer > 0,
-         estimated_time > 0) %>%
-  mutate("trip_radar" = ifelse((estimated_distance == 0 | is.na(estimated_distance)), TRUE, FALSE))
+         upfront_offer < y_max,
+         estimated_time < x_max) %>%
+  mutate(trip_radar = ifelse((estimated_distance == 0 | is.na(estimated_distance)), "Trip Radar", "Regular"),
+         size = ifelse(trip_radar=="Trip Radar", 1, 0)) %>%
+  arrange(trip_radar)
 
-p <- ggplot(data=tb_plot, 
+p <- ggplot(data=tbp, 
             aes(x=estimated_time, 
-                y=upfront_offer, 
-                colour=trip_radar))
+                y=upfront_offer,
+                colour=trip_radar,
+                size=as.factor(size)))
 
 p + 
-  geom_point(alpha=0.5) +
+  geom_point(size=1*(1 + tbp$size), alpha=(0.5 + tbp$size)) +
   # geom_smooth(method="lm", linetype=3) +
-  annotate("text", x=0.7 * x_max, y=0.2 * y_max, colour="red",
-           label=sprintf("Preliminary results (%s)", today())) +
-  labs(title="Upfront offer prices: regular and Trip Radar",
-       subtitle=sprintf("%s UberX screenshots with estimated distance between %s km and %s km",
-                        nrow(tb_plot), distance_min, distance_max),
-       caption="Trip Radar screenshots can be identified because they show an estimated time but no estimated distance.\nTrip Radar offers do not appear to be lower than regular Upfront offers.",
+  labs(title="PRELIMINARY: Regular and Trip Radar upfront offers",
+       caption="Trip Radar offers do not include an estimated distance.\nTrip Radar offers do not appear to be lower than regular Upfront offers.",
        x="Estimated time (mins)",
        y="Upfront fare offer ($)") +
   scale_x_continuous(limits=c(0, x_max)) +
   scale_y_continuous(limits=c(0, y_max)) +
   theme(legend.position="inside",
         legend.position.inside = c(0.2,0.8),
+        legend.title=element_blank(),
         plot.title=element_text(hjust=0),
         plot.subtitle=element_text(hjust=0),
         plot.caption = element_text(hjust=0)) +
