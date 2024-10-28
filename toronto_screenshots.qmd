@@ -6,7 +6,7 @@ author: "Rideshare Drivers Association of Ontario"
 format: 
   revealjs:
     # logo: whatever.png
-    footer: "Copyright © 2024 Rideshare Drivers Association of Ontario"
+    footer: "Copyright © 2024 Rideshare Drivers Association of Ontario. Data analysis by RideFair."
 ---
 
 Following Uber's introduction of "Upfront pricing for drivers" in Ontario on October 8, 2024, rideshare drivers have been sending screenshots of trip offers and trip earnings to The Rideshare Drivers Association of Ontario. This set of charts captures some of what those screenshots show. 
@@ -21,12 +21,12 @@ The first two charts show the same overall averages in two different ways, as a 
 #| label: setup
 #| include: FALSE
 
-librarian::shelf(tidyverse, googlesheets4, janitor)
+librarian::shelf(tidyverse, googlesheets4, janitor, RSQLite, DBI)
 ss = "1_jOPbHF2T3tm7a3jM3T0giYQgeqi7isB9JIH4hmtnqE"
 ss_id = as_sheets_id(ss)
 url = sprintf("https://docs.google.com/spreadsheets/d/%s/edit?gid=1094854580#gid=1094854580", ss)
-tb_ref <- read_sheet(ss=ss_id, range="Reference Values!A2:I5") %>% 
-  column_to_rownames(var="Metric") %>% 
+tb_ref <- read_sheet(ss=ss_id, range="Reference Values!A2:I5") %>%
+  column_to_rownames(var="Metric") %>%
   t() %>%
   as_tibble(rownames=NA) %>%
   rownames_to_column(var="trip_type") %>%
@@ -73,10 +73,13 @@ tbm <- tb %>%
          estimated_distance > distance_min,
          estimated_distance < distance_max,
          upfront_offer > 0,
-         estimated_time_decimal > 0) 
+         estimated_time_decimal > 0) # %>%
+  # filter(actual_earnings > 0)
 
 model <- lm(upfront_diff ~ 0 + estimated_rate_card_fare, 
-                      data=tbm %>% filter(estimated_rate_card_fare < 50 | upfront_diff < 0))
+                      data=tbm %>% filter(estimated_rate_card_fare < 40 | upfront_diff < 0))
+
+outlier_count = nrow(tbm) - nrow(tbm %>% filter(estimated_rate_card_fare < 40 | upfront_diff < 0))
 
 coeff <- model$coefficients[["estimated_rate_card_fare"]]
 intercept = 0
@@ -108,7 +111,7 @@ p +
   labs(title=sprintf("Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tbp)),
        x="Estimated rate card fare ($)",
        y="Change from rate card to Upfront ($)",
-      caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17).\n* Fit excludes outliers with rate card > 50 and upfront change > 0.") + 
+      caption=sprintf("Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17).\n* Fit excludes the %s outliers that have rate card > 40 and upfront change > 0.", outlier_count)) + 
   theme(legend.position="none",
         plot.title=element_text(hjust=0),
         plot.subtitle=element_text(hjust=0),
@@ -137,7 +140,8 @@ tbm <- tb %>%
          estimated_time_decimal > 0) 
 
 model <- lm(upfront_diff ~ 0 + estimated_rate_card_fare, 
-                      data=tbm %>% filter(estimated_rate_card_fare < 50 | upfront_diff < 0))
+                      data=tbm %>% filter(estimated_rate_card_fare < 40 | upfront_diff < 0))
+outlier_count = nrow(tbm) - nrow(tbm %>% filter(estimated_rate_card_fare < 40 | upfront_diff < 0))
 
 coeff <- model$coefficients[["estimated_rate_card_fare"]]
 intercept = 0
@@ -169,7 +173,7 @@ p +
   labs(title=sprintf("Upfront offers and rate card estimates (%s UberX screenshots)", nrow(tbp)),
        x="Upfront / rate card",
        y="Number of trips",
-      caption="Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17).\n* Fit excludes outliers with rate card > 50 and upfront change > 0.",
+      caption=sprintf("Estimated rate card fare = 0.75 * ($0.18/min + $0.81/km + $3.17).\n* Fit excludes the %s outliers that have rate card > 40 and upfront change > 0.", outlier_count), 
       fill="Trip Length") +
   theme(legend.position = "inside", 
         legend.position.inside=c(0.8, 0.8),
@@ -443,3 +447,129 @@ p +
   scale_colour_brewer(palette = "Dark2")
 ```
 
+```{r}
+#| label: explore-1
+#| include: FALSE
+#| 
+
+tbp <- tb %>% filter(upfront_offer > 0, actual_earnings > 0, trip_type=="UberX")
+
+p <- ggplot(data=tbp, 
+            aes(x=actual_earnings, 
+                y=upfront_offer))
+
+p + geom_point()
+```
+
+
+
+```{r}
+#| label: best-fit-vs-actual-upfront
+#| include: FALSE
+
+distance_min = 0
+distance_max = 40
+
+# Fit the upfront_offer as a function of time and distance, with a linear model
+tbm <- tb %>% 
+  filter(trip_type=="UberX",
+         date >= as.Date("2024-10-08"), 
+         estimated_distance > distance_min,
+         estimated_distance < distance_max,
+         upfront_offer > 0,
+         estimated_time_decimal > 0) # %>%
+  # filter(actual_earnings > 0)
+
+model <- lm(upfront_offer ~ estimated_time + estimated_distance, data=tbm)
+# model_0 <- lm(upfront_offer ~ 0 + estimated_time + estimated_distance, data=tbm)
+
+coeff_time <- model$coefficients[["estimated_time"]]
+coeff_distance <- model$coefficients[["estimated_distance"]]
+intercept <- model$coefficients[["(Intercept)"]]
+r_squared <- summary(model)$r.squared
+
+tbp <-tbm %>%
+  mutate(best_fit_offer=intercept + coeff_time * estimated_time + coeff_distance * estimated_distance)
+# outlier_count = nrow(tbm) - nrow(tbm %>% filter(estimated_rate_card_fare < 40 | upfront_diff < 0))
+
+max_x = max(tbp$best_fit_offer)
+max_y = max(tbp$upfront_offer)
+
+p <- ggplot(data=tbp, 
+            aes(x=best_fit_offer, 
+                y=upfront_offer,
+                colour="dummy"))
+
+eqn = sprintf("offer == %3.2f + %3.2f/min + %3.2f/km * ',' ~~ italic(r)^2 ~ '=' ~ %.2g", 
+              intercept,
+              coeff_time, 
+              coeff_distance,
+              r_squared)
+p + 
+  geom_point() +
+  geom_abline(slope=1, intercept=0, colour="#1b9e77") +
+  # geom_smooth(method="lm", linetype=3) +
+  labs(title="Upfront offers and best fit time-and-distance offers",
+        x="Best-fit time and distance offer ($)",
+       y="Actual Upfront fare offer ($)") +
+  annotate("label",
+           x= 0, 
+           y= 0.9 * max_x,
+           parse=TRUE,
+           hjust=0,
+           label=eqn) +
+  scale_x_continuous(limits=c(0, max(tbp$best_fit_offer))) +
+  scale_y_continuous(limits=c(0, max(tbp$best_fit_offer))) +
+  theme(legend.position="none",
+        legend.position.inside = c(0.2,0.8),
+        legend.title=element_blank(),
+        plot.title=element_text(hjust=0),
+        plot.subtitle=element_text(hjust=0),
+        plot.caption = element_text(hjust=0)) +
+  scale_colour_brewer(palette = "Dark2")
+```
+
+
+
+```{r}
+#| label: deviations-1
+#| include: false
+
+# Is there a correlation between deviation from time-and-distance, and en-route time?
+
+tbm <- tb %>% 
+  filter(trip_type=="UberX",
+         date >= as.Date("2024-10-08"), 
+         upfront_offer > 0,
+         estimated_time_decimal > 0) 
+
+model <- lm(upfront_offer ~ estimated_time + estimated_distance, data=tbm)
+coeff_time <- model$coefficients[["estimated_time"]]
+coeff_distance <- model$coefficients[["estimated_distance"]]
+intercept <- model$coefficients[["(Intercept)"]]
+r_squared <- summary(model)$r.squared
+
+tbp <- tb %>% 
+  filter(trip_type=="UberX",
+         date >= as.Date("2024-10-08"), 
+         upfront_offer > 0,
+         estimated_time_decimal > 0,
+         en_route_distance > 0) %>%
+  mutate(best_fit_offer=estimated_time * coeff_time + estimated_distance * coeff_distance + intercept,
+         deviation=upfront_offer-best_fit_offer,
+         deviation_percent=100 * (upfront_offer-best_fit_offer)/best_fit_offer)
+
+p <- ggplot(data=tbp, 
+            aes(x=en_route_time, 
+                y=deviation_percent,
+                colour="dummy"))
+
+p + 
+  geom_point() +
+  labs(title="Deviation from time-and-distance",
+        x="En Route Time",
+       y="Deviation ($)") +
+  scale_y_continuous(limits=c(-100,100)) +
+  scale_colour_brewer(palette = "Dark2") +
+  theme(legend.position="none")
+```
