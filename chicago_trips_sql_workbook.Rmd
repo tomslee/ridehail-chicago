@@ -1,5 +1,5 @@
 ---
-title: "Chicago Ridehail: Trips Workbook"
+title: 'Chicago Ridehail: Trips Workbook'
 output:
   html_document:
     toc: true
@@ -9,8 +9,11 @@ output:
       smooth_scroll: true
   number_sections: true
   df_print: paged
-editor_options: 
-  markdown: 
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+editor_options:
+  markdown:
     wrap: 72
 ---
 
@@ -21,9 +24,9 @@ No text needed here.
 ```{r setup, include=FALSE, echo=FALSE}
 # install.packages("librarian")
 librarian::shelf(tidyverse, knitr, reshape2, ggtext, 
-                 jsonlite, stringr, lubridate, scales, 
+                 jsonlite, stringr, lubridate, scales, paletteer,
                  ggthemes, RColorBrewer, viridis, vroom,
-                 janitor, RPostgres, pals, ggh4x
+                 janitor, RPostgres, pals, ggh4x, sf
                  )
 
 knitr::opts_knit$set(echo = FALSE)
@@ -234,7 +237,7 @@ dbClearResult(rs)
 p <- ggplot(data=tb, aes(x=trip_date, y=trips, 
                              colour="dummy"))
 p + 
-  #facet_wrap(vars(measure), scales="free") +
+  #facet_wrap(vars(value), scales="free") +
   geom_line() +
   labs(title="TNC recorded trips with non-zero time recorded, per month in Chicago",
        subtitle="Trips on the first Thursday of the month",
@@ -412,7 +415,7 @@ p +
 
 # Analysis: aggregate changes over time
 
-```{r ca_aggregate_plot, echo=FALSE}
+```{r ca_aggregate_plot-1, echo=FALSE}
 pickup_community_area_list = list(0)
 index = 0
 mean_trip_miles = 6.112
@@ -451,12 +454,12 @@ for(pickup_community_area in pickup_community_area_list){
 tb <- tb %>%
   pivot_longer(!c(pickup_community_area, 
                   model_date),
-               names_to="category", values_to="measure"
+               names_to="category", values_to="value"
                ) 
 
 p <- ggplot(data=tb, 
             mapping=aes(x=model_date, 
-                        y=measure, 
+                        y=value, 
                         colour="dummy"),
                         fill="dummy")
 
@@ -497,10 +500,10 @@ dbClearResult(rs)
 
 p <- ggplot(data=tb %>% 
               pivot_longer(!c(year, month),
-                           names_to="category", values_to="measure") %>%
+                           names_to="category", values_to="value") %>%
               mutate(fare_date=as.Date(sprintf("%s-%s-01", year, month))), 
             mapping=aes(x=fare_date, 
-                        y=measure, 
+                        y=value, 
                         colour=category),
                         fill="dummy")
 
@@ -559,12 +562,12 @@ tb <- tb %>%
   pivot_longer(!c(pickup_community_area, 
                   model_date,
                   model_type),
-               names_to="category", values_to="measure"
+               names_to="category", values_to="value"
                ) 
 
 p <- ggplot(data=tb, 
             mapping=aes(x=model_date, 
-                        y=measure, 
+                        y=value, 
                         colour=model_type),
                         fill=model_type)
 
@@ -590,18 +593,25 @@ p +
 
 ```{r model_fares_distance, echo=FALSE}
 
-sql <- {"select model_date, bin_max, avg(fare) as mean_bin_fare, avg(trip_miles) as mean_bin_miles, 
-	avg(60.0 * trip_miles/trip_minutes) as mean_bin_mph, cast(count(*) as numeric) as trip_count, 
+sql <- {"select model_date, bin_max, 
+  avg(fare) as mean_bin_fare, 
+  avg(trip_miles) as mean_bin_miles, 
+	avg(60.0 * trip_miles/trip_minutes) as mean_bin_mph, 
+	cast(count(*) as numeric) as trip_count, 
 	avg(coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes) as mean_bin_model_fare
 from
-	(select model_date, trip_miles, trip_minutes, fare, coeff_per_mile, coeff_per_minute,
-	round((5 + trip_miles)/ 10) * 10 as bin_max
+	(select model_date, 
+	  trip_miles, trip_minutes, 
+	  fare, coeff_per_mile, coeff_per_minute,
+	  round((5 + trip_miles)/ 10) * 10 as bin_max
 	from ridehail.trip_fares 
 	inner join ridehail.trip_model
-	on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
-	and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
+	-- on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
+	-- and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
+	on ridehail.trip_fares.year = ridehail.trip_model.year
+	and ridehail.trip_fares.month = ridehail.trip_model.month
 	where ridehail.trip_model.pickup_community_area = 0
-	and ridehail.trip_model.model_type = 'zero40'
+	and ridehail.trip_model.model_type = 'lm'
 	and ridehail.trip_fares.trip_miles < 40
 	and trip_minutes > 0) as T
 group by bin_max, model_date
@@ -611,15 +621,21 @@ rs <- dbSendQuery(con,sql)
 tb <- as_tibble(dbFetch(rs, n=-1)) 
 dbClearResult(rs)
 
+# model_diff is the difference between the actual mean fare (for that bin) and the 
+# best time-and-distance fare. As the time-and-distance fare comes from the best 
+# fit model for the whole distribution, these numbers should average out to zer
+# over all bins. A value of model_diff above zero says that that bin has had its
+# price raised relative to other bins.
 tb_plot <- tb %>%
- mutate(model_diff = mean_bin_fare - mean_bin_model_fare) %>%
- pivot_longer(!c(model_date, bin_max),
-               names_to="category", values_to="measure"
+  mutate(model_diff = mean_bin_fare - mean_bin_model_fare) %>%
+  select(!c(mean_bin_miles, trip_count)) %>%
+  pivot_longer(!c(model_date, bin_max),
+               names_to="category", values_to="value"
                ) 
 
 p <- ggplot(data=tb_plot, 
             mapping=aes(x=model_date, 
-                        y=measure, 
+                        y=value, 
                         colour=as.factor(bin_max)))
 p +
   facet_wrap(vars(category), scales = "free_y") +
@@ -635,12 +651,15 @@ p +
   scale_colour_brewer(palette = "Dark2") 
 ```
 
-## changed, binned
+## How has the price for trips of different lengths changed?
+
+
 
 ```{r model_fares_change, echo=FALSE}
 
-sql <- {"select model_date, bin_max, 
+sql <- {"select model_date, bin_max, trip_count,
 	mean_bin_fare,
+	mean_bin_fare/mean_bin_miles as mean_fare_per_mile,
 	mean_bin_model_fare,
 	(100.0 * mean_bin_fare / first_value(mean_bin_fare) over w)  as percent_first_mean_bin_fare,
 	(100.0 * mean_bin_model_fare / first_value(mean_bin_model_fare) over w)  as percent_first_mean_bin_model_fare
@@ -653,12 +672,13 @@ from
 	round((5 + trip_miles)/ 10) * 10 as bin_max
 	from ridehail.trip_fares 
 	inner join ridehail.trip_model
-	on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
-	and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
+	  on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
+	  and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
 	where ridehail.trip_model.pickup_community_area = 0
-	and ridehail.trip_model.model_type = 'zero'
-	and ridehail.trip_fares.trip_miles < 40
-	and trip_minutes > 0) as T
+	  and ridehail.trip_model.model_type = 'lm'
+	  and ridehail.trip_fares.trip_miles < 40
+--	  and model_date > '2020-01-01'
+	  and trip_minutes > 0) as T
 group by bin_max, model_date
 order by bin_max, model_date
 ) as T
@@ -669,14 +689,15 @@ tb <- as_tibble(dbFetch(rs, n=-1))
 dbClearResult(rs)
 
 tb_plot <- tb %>%
- mutate(model_diff = mean_bin_fare - mean_bin_model_fare) %>%
- pivot_longer(!c(model_date, bin_max),
-               names_to="category", values_to="measure"
+  select(!c(trip_count)) %>%
+  mutate(model_diff = mean_bin_fare - mean_bin_model_fare) %>%
+  pivot_longer(!c(model_date, bin_max),
+               names_to="category", values_to="value"
                ) 
 
 p <- ggplot(data=tb_plot, 
             mapping=aes(x=model_date, 
-                        y=measure, 
+                        y=value, 
                         colour=as.factor(bin_max)))
 p +
   facet_wrap(vars(category), scales = "free_y") +
@@ -691,6 +712,72 @@ p +
   # theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2") 
 ```
+
+## Does the mean of each fit equally well? (stats questions)
+
+
+```{r model_fares_distance-fit-mean, echo=FALSE}
+
+sql <- {"select model_date, trip_length_bin, 
+  avg(fare) as mean_bin_fare, 
+  avg(trip_miles) as mean_bin_miles, 
+	avg(60.0 * trip_miles/trip_minutes) as mean_bin_mph, 
+	cast(count(*) as numeric) as trip_count, 
+	avg(coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes + coeff_intercept) as mean_bin_model_fare
+from
+	(select model_date, 
+	  trip_miles, trip_minutes, 
+	  fare, coeff_per_mile, coeff_per_minute, coeff_intercept, 
+	  -- round((5 + trip_miles)/ 10) * 10 as bin_max
+	  case when trip_miles < 30 then 'short' else 'long' end as trip_length_bin
+	from ridehail.trip_fares 
+	inner join ridehail.trip_model
+	on ridehail.trip_fares.year = date_part('year', ridehail.trip_model.model_date)  
+	and ridehail.trip_fares.month = date_part('month', ridehail.trip_model.model_date)  
+	where ridehail.trip_model.pickup_community_area = 0
+	and ridehail.trip_model.model_type = 'lm'
+	-- and ridehail.trip_fares.trip_miles < 40
+	and trip_minutes > 0) as T
+group by trip_length_bin, model_date
+order by trip_length_bin, model_date"}
+
+rs <- dbSendQuery(con,sql)
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+# model_diff is the difference between the actual mean fare (for that bin) and the 
+# best time-and-distance fare. As the time-and-distance fare comes from the best 
+# fit model for the whole distribution, these numbers should average out to zer
+# over all bins. A value of model_diff above zero says that that bin has had its
+# price raised relative to other bins.
+tb_plot <- tb %>%
+  # filter(model_date==max(model_date)) %>%
+  mutate(model_diff =  (mean_bin_fare -  mean_bin_model_fare),
+         trip_length_bin = factor(trip_length_bin, levels=c("short", "long"))) %>%
+  select(c(model_date, trip_length_bin, model_diff)) %>%
+  arrange(model_date, trip_length_bin)
+
+p <- ggplot(data=tb_plot, 
+            mapping=aes(x=model_date, 
+                        y=model_diff, 
+                        fill=trip_length_bin,
+                        colour=trip_length_bin))
+p +
+  geom_col(stat="identity", position="dodge", colour="white") +
+  # geom_line() +
+  # geom_smooth(method="lm", se=FALSE, fullrange=FALSE, level=0.95) +
+  labs(title="Chicago ridehail trends: upfront effects on trips of different distances",
+       x="Date",
+       y="Actual fare vs time-and-distance fare ($)",
+       fill="Trip distance class") +
+  # scale_y_continuous(limits=c(0, NA)) +
+  # theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2") 
+```
+
+
 
 ## Looking more closely at RSE
 
@@ -833,7 +920,7 @@ p +
   # scale_colour_tableau(palette = "Hue Circle")
   scale_colour_manual(values=as.vector(pals::alphabet()))
 ```
-# Fare variation
+# Distribution of fares
 
 ```{r fig-fare-variation, echo=FALSE}
 target_month = 6
@@ -878,6 +965,7 @@ p +
   scale_colour_brewer(palette="Dark2")
 
 ```
+## Fare deviations from model (not a useful plot)
 
 ```{r fig-win-loss, echo=FALSE}
 target_year = 2022
@@ -945,19 +1033,19 @@ p +
   geom_function(fun = f_demand) + 
   labs(x="Quantity", y="Price") +
   geom_ribbon(data=subset(mydata, x<=5), 
-              aes(ymin=5, ymax=demand), fill="red", alpha=0.2,) + 
+              aes(ymin=5, ymax=demand), fill="#1b9e77", alpha=0.2,) + 
   geom_ribbon(data=subset(mydata, x<=2.5), 
-              aes(ymin=7.5, ymax=demand), fill="blue", alpha=0.2,) +
-  annotate("segment", x = 0, y = 5, xend = 5, yend = 5, linetype="dashed", color="red") +
-  annotate("segment", x = 5, y = 0, xend = 5, yend = 5, linetype="dashed", color="red")  +
-  annotate("segment", x = 0, y = 7.5, xend = 2.5, yend = 7.5, linetype="dashed", color="blue") +
-  annotate("segment", x = 2.5, y = 2.5, xend = 2.5, yend = 7.5, linetype="dashed", color="blue")  +
+              aes(ymin=7.5, ymax=demand), fill="#d95f02", alpha=0.2,) +
+  annotate("segment", x = 0, y = 5, xend = 5, yend = 5, linetype="dashed", color="#1b9e77") +
+  annotate("segment", x = 5, y = 0, xend = 5, yend = 5, linetype="dashed", color="#1b9e77")  +
+  annotate("segment", x = 0, y = 7.5, xend = 2.5, yend = 7.5, linetype="dashed", color="#d95f02") +
+  annotate("segment", x = 2.5, y = 2.5, xend = 2.5, yend = 7.5, linetype="dashed", color="#d95f02")  +
   annotate("label", x = 9, y = 1, label = "Demand") + #, label.size=0) +
   annotate("label", x = 9, y = 9, label = "Supply") +
-  annotate("label", x = 5, y = 5, hjust="left", label = "Competition", colour="red") +
-  annotate("label", x = 1.25, y = 6, hjust="left", label = "Consumer surplus\n(competition)", fill="white", colour="red") +
-  annotate("label", x = 2.5, y = 7.5, hjust="left", label = "Monopoly", colour="blue") +
-  annotate("label", x = 0.25, y = 8.5, hjust="left", label = "Consumer surplus\n(monopoly)", colour="blue") +
+  annotate("label", x = 5, y = 5, hjust="left", label = "Competition", colour="#1b9e77") +
+  annotate("label", x = 1.25, y = 6, hjust="left", label = "Consumer surplus\n(competition)", fill="white", colour="#1b9e77") +
+  annotate("label", x = 2.5, y = 7.5, hjust="left", label = "Monopoly", colour="#d95f02") +
+  annotate("label", x = 0.25, y = 8.5, hjust="left", label = "Consumer surplus\n(monopoly)", colour="#d95f02") +
   theme(axis.text.x=element_blank(),
         axis.ticks.x=element_blank(),
         axis.text.y=element_blank(),
@@ -984,12 +1072,12 @@ tb <- as_tibble(dbFetch(rs, n=-1))
 dbClearResult(rs)
 
 tb_plot <- tb %>% pivot_longer(!trip_date,
-               names_to="category", values_to="measure"
+               names_to="category", values_to="value"
                ) 
 
 p <- ggplot(data=tb_plot, 
             mapping=aes(x=trip_date, 
-                        y=measure, 
+                        y=value, 
                         colour=category))
 p +
   facet_wrap(vars(category), scales="free") +
@@ -1005,5 +1093,141 @@ p +
   # theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2")
 ```
+# Community Area-based deviations
 
+```{r ca_deviation, echo=FALSE}
+sql <- {"select F.year, F.month,
+  F.pickup_community_area, 
+  CA.name,
+  count(*) trips, 
+  avg(fare) as mean_fare, 
+  avg(trip_miles) as mean_miles, 
+  avg(trip_minutes) as mean_minutes, 
+  avg(fare - (coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes + coeff_intercept)) as deviation
+from ridehail.trip_fares F 
+inner join ridehail.community_area CA
+  on F.pickup_community_area = CA.id
+inner join ridehail.trip_model M
+  on F.year = M.year and F.month = M.month
+where M.model_type = 'lm' and M.pickup_community_area = 0
+group by F.year, F.month, F.pickup_community_area, CA.name
+having count(*) > 100
+order by deviation desc;"}
+
+rs <- dbSendQuery(con,sql)
+#dbBind(rs, list(year, month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+tbp <- tb %>% 
+  filter(year==2024, month==8) %>% 
+  mutate(deviation_scale = deviation * as.numeric(trips)) %>%
+  pivot_longer((cols=c("deviation", "mean_miles"), 
+                names_to="category", values_to="value")))
+
+p <- ggplot(data=tbp, 
+            mapping=aes(x=pickup_community_area, 
+                        y=value, 
+                        colour=name,
+                        fill=name))
+
+p +
+  geom_line() +
+  #geom_col(position="dodge") +
+  # theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")
+```
+
+##  Community Area Scatter Plot
+
+```{r deviation-more, echo=FALSE}
+
+tbp <- tb %>% 
+  filter(year==2024, month==8) %>% 
+  mutate(deviation_scale = deviation * as.numeric(trips))
+
+# continuation
+p <- ggplot(data=tbp, 
+            mapping=aes(x=mean_miles, 
+                        y=deviation, 
+                        colour="dummy",
+                        fill="dummy",
+                        size=trips))
+
+highlight <- tbp %>% filter(pickup_community_area %in% c(56, 76))
+
+p +
+  geom_point() +
+  geom_hline(yintercept=0, colour="darkgrey") +
+  theme(legend.position="none") +
+  labs(title="Algorithmic Pricing: Pickup Community Area",
+       subtitle="Dot size shows the number of trips from the community area",
+       x="Average trip distance (miles)",
+       y="Deviation from time-and-distance model ($/trip)") +
+  geom_text(data=highlight, label="Airport", size=4, vjust=2, colour="black") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")
+```
+
+## O'Hare and others over time
+
+```{r label=ohare, echo=FALSE}
+
+tbp <- tb %>% 
+  filter(pickup_community_area %in% c(8, 32, 33, 76)) %>% 
+  arrange(year, month) %>%
+  mutate(this_date=as.Date(sprintf("%s-%s-01", year, month)))
+
+p <- ggplot(data=tbp, 
+            mapping=aes(x=this_date, 
+                        y=deviation, 
+                        colour=as.factor(pickup_community_area),
+                        fill=as.factor(pickup_community_area)))
+
+p + 
+  # geom_col(position="dodge", colour="white") +
+  geom_line() +
+  labs(title="Deviation from time-and-distance fares, by community area",
+       subtitle="Shows selected high-price community areas",
+       x="Date",
+       y="Deviation ($/trip)",
+       colour="Community area",
+       fill ="Community area") +
+  scale_x_date() +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")
+```
+
+## Community area map
+
+```{r ca-map, echo=FALSE}
+# From https://thisisdaryn.netlify.app/post/intro-to-making-maps-with-ggplot2/#using-read_sf-to-read-in-a-geojson-file
+
+
+tbp <- tb %>% 
+  filter(year==2024, month==6) %>%
+  mutate(this_date=as.Date(sprintf("%s-%s-01", year, month))) %>%
+  mutate(area_num_1 = as.character(pickup_community_area),
+         map_label=ifelse(deviation > 1.5, area_num_1, ""))
+
+
+map <- read_sf("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson") 
+
+trips_map <- left_join(map, tbp, by = "area_num_1")
+
+p <- ggplot(data=trips_map, 
+            mapping=aes(fill=deviation)) 
+
+p + 
+  geom_sf() +
+  geom_sf_text(aes(label = map_label)) +
+  labs(title="Average deviation from best fit time-and-distance fare",
+       subtitle="Trips categorized by pickup community area",
+       fill="Average deviation\n($/trip)") +
+  # scale_fill_continuous(low = "ivory", high = "#d95f02")
+  scale_fill_continuous(low = "ivory", high = "#1b9e77") +
+  theme_map()
 ```
