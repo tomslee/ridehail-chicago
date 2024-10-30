@@ -24,7 +24,7 @@ toc-depth: 2
 toc-title: Contents
 knitr:
   opts_chunk:
-    out.width: "80%"
+    out.width: "100%"
 number-sections: false
 number-depth: 1
 callout-appearance: default
@@ -44,6 +44,48 @@ format:
     keep-tex: true
     mainfont: "CharterBT-Roman"
     linestretch: 1.1
+  pdf: 
+    documentclass: scrartcl
+    papersize: letter
+    toc: true
+    number-sections: true
+    colorlinks: true
+    output-file: "surveillance_pricing"
+    output-ext:  "pdf"
+    mainfont: "CharterBT-Roman"
+    fontsize: 12pt
+    linestretch: 1.1
+    keep-tex: true
+    template-partials:
+    - title.tex
+    geometry:
+    - top=30mm
+    - left=30mm
+    - heightrounded
+    include-in-header:
+      text: |
+        \newfontfamily\sectionfont[Color=MidnightBlue]{RobotoCondensed-Regular}
+        \newfontfamily\subsectionfont[Color=MidnightBlue]{RobotoCondensed-Regular}
+        \newfontfamily\subsubsectionfont[Color=MidnightBlue]{RobotoCondensed-Regular}
+        \addtokomafont{section}{\sectionfont}
+        \addtokomafont{subsection}{\subsectionfont}
+        \addtokomafont{subsubsection}{\subsubsectionfont}
+        \usepackage{mdframed}
+filters:
+  - watermark
+watermark:
+  text: "DRAFT"
+  size: 1
+  angle: 15
+  color: "#000000"
+  opacity: 0.1
+  cols: 10
+  rows: 50
+  col-space: 4
+  row-space: 4
+  z-index: -1
+  html-font: "system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', 'Noto Sans', 'Liberation Sans', Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji'"
+# pdf-font: "ETbb"
 # editor: visual
 ---
 
@@ -51,9 +93,11 @@ format:
 #| label: setup
 #| echo: false
 #| include: false
-librarian::shelf(tidyverse, janitor, RColorBrewer, RPostgres, patchwork)
+librarian::shelf(tidyverse, janitor, RColorBrewer, RPostgres, patchwork, sf, ggthemes)
 update_geom_defaults("line", aes(linewidth=1.5, alpha=1.0))
 update_geom_defaults("point", aes(size=2, alpha=1.0))
+# Uncomment the line below to prevent warnings appearing in the output
+options(warn=-1)
 # The password is stored in a pgpass file (~/.pgpass, or %APPDATA%\postgresql\pgpass.conf on Windows)
 con <- dbConnect(RPostgres::Postgres(),
                  host="database-1.cxkc40qycf2y.us-east-2.rds.amazonaws.com",
@@ -79,6 +123,7 @@ The chart shows relatively constant fares from 2019 to the beginning of 2021, wi
 #| echo: false
 #| fig-cap: "Average fares per trip, with and without \"additional charges\""
 #| fig-scap: "Average fares"
+
 pickup_community_area_list = list(0)
 index = 0
 for(pickup_community_area in pickup_community_area_list){
@@ -115,7 +160,8 @@ tb <- tb %>%
   pivot_longer(!c(pickup_community_area, 
                   model_date),
                names_to="category", values_to="measure"
-               )
+               ) %>%
+  arrange(category)
 
 tb$category = factor(tb$category, 
                      levels=c("Average Total Fare", "Average Fare"))
@@ -128,6 +174,12 @@ p <- ggplot(data=tb,
 p +
   geom_line() +
   labs(x="Date", y="Fare ($/trip)") +
+  geom_smooth(data=tb %>% filter(model_date<as.Date("2021-01-01")), 
+              formula = y ~x, method="lm", se=FALSE, fullrange=FALSE, 
+              level=0.95, linetype=2) +
+  geom_smooth(data=tb %>% filter(model_date>as.Date("2021-01-01")), 
+              formula = y ~x, method="lm", se=FALSE, fullrange=FALSE,
+              level=0.95, linetype=2) +
   theme(legend.position = "inside", 
         legend.position.inside=c(0.2, 0.8),
         legend.title=element_blank()) +
@@ -205,7 +257,7 @@ p +
   scale_colour_brewer(palette = "Dark2")
 ```
 
-# Uber's "upfront pricing" drove the fare increases
+# Algorithmic pricing drove the fare increases
 
 In its early years, Uber set its fares based on a combination of time and distance. For example, a 6 mile, 18 minute trip with base rates of \$1 per mile and \$0.20 per minute would cost \$6 + \$3.60 = \$9.60. More recently, Uber moved away from this time-and-distance model and adopted "upfront" fares. The price for a trip is given "upfront", but the factors that set the price are hidden. "Upfront pricing" is not an all-or-nothing system: the inputs to the model and their importance may change over time as Uber refines and revises its pricing algorithms.
 
@@ -362,8 +414,7 @@ Operating profit or loss is, roughly, the everyday revenue of a company minus th
 -->
 ```{r}
 #| label: fig-uber-operations
-#| echo: FALSE
-#| eval: FALSE
+#| include: false
 #| fig-cap: Uber's operation profit/loss balance from 2019--2024
 
 ops <- c(-1.03,-5.49, -1.11, -0.97, -1.26, -1.61,
@@ -395,15 +446,118 @@ p_operations <- p +
 p_operations
 ```
 
-# Why variable prices matter
+# Algorithmically-targeted surcharges: the case of location
+
+Uber has said that upfront prices depend on factors beyond time and distance. The public data available does not include personal factors, but it does include location data. By comparing the prices for different locations to the best-fit time-and-distance model we can see whether location is being used as a factor. In other words, "are different community areas treated differently?"
+
+@fig-community-area-map shows that a small number of community areas have trip prices significantly above what would be expected from the time-and-distance model. (Trips are identified by the community area where pickup happens). They fall into two categories:
+
+* Central areas (8, 28, 32, 33). These are high-traffic areas (large dots) in central Chicago, where average trip distances are short (to the left of the plot @fig-community-area-map (b)). Because trips are short, Uber has already raised prices here relative to the pre-Upfront "rate card" prices. But in these areas there is an additional price hike: it is essentially a permanent surge pricing for riders in these areas, although unlike surge pricing only Uber knows whether it passes the price increase on to drivers.
+
+* Airports (56, 76). Community area 76 is O'Hare airport, and area 56 is the older Midway airport. Trips from here are generally longer than average (to the right of the plot), but are marked up from the time-and-distance model. Again, there is no way to know whether the elevated prices are passed on to drivers.
+
+This is just one way in which Uber is using upfront algorithmic prices to segment the ride-hail market into different, smaller markets where they can test out how high they can set their prices without losing too many riders, and how low they can set pay without losing too many drivers.
+
+
+```{r}
+#| label: fig-community-area-map
+#| echo: false
+#| fig-cap: "Deviations from time-and-distance pricing by community area (June 2024)"
+#| fig-scap: "Deviations from time-and-distance"
+# From https://thisisdaryn.netlify.app/post/intro-to-making-maps-with-ggplot2/#using-read_sf-to-read-in-a-geojson-file
+
+this_year = 2024
+this_month = 6
+label_cutoff = 1.5
+
+sql <- {"select F.year, F.month,
+  F.pickup_community_area, 
+  CA.name,
+  count(*) trips, 
+  avg(fare) as mean_fare, 
+  avg(trip_miles) as mean_miles, 
+  avg(trip_minutes) as mean_minutes, 
+  avg(fare - (coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes + coeff_intercept)) as deviation
+from ridehail.trip_fares F 
+inner join ridehail.community_area CA
+  on F.pickup_community_area = CA.id
+inner join ridehail.trip_model M
+  on F.year = M.year and F.month = M.month
+where M.model_type = 'lm' and M.pickup_community_area = 0
+and F.year = $1 and F.month = $2
+group by F.year, F.month, F.pickup_community_area, CA.name
+having count(*) > 100
+order by deviation desc;"}
+
+rs <- dbSendQuery(con,sql)
+dbBind(rs, list(this_year, this_month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+tbp <- tb %>% 
+  # filter(year==this_year, month==this_month) %>%
+  mutate(this_date=as.Date(sprintf("%s-%s-01", year, month)),
+         area_num_1 = as.character(pickup_community_area)) %>%
+  mutate(map_label=ifelse(deviation > label_cutoff, area_num_1, "")) 
+
+map <- read_sf("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson") 
+
+trips_map <- left_join(map, tbp, by = "area_num_1") %>%
+  pivot_longer(c(mean_fare, mean_miles, mean_minutes, deviation), 
+               names_to="category", 
+               values_to="measure") %>%
+  filter(category == "deviation")
+
+p_map <- ggplot(data=trips_map, 
+            mapping=aes(fill=measure)) 
+
+p_map <- p_map + 
+  geom_sf() +
+  geom_sf_text(aes(label = map_label)) +
+  labs(fill="Deviation\n($/trip)") +
+  scale_fill_continuous(low = "ivory", high = "#1b9e77") +
+  theme_map() 
+
+
+tbp <- tb %>% 
+  filter(year==this_year, month==this_month) %>% 
+  mutate(deviation_scale = deviation * as.numeric(trips))
+
+p_dist <- ggplot(data=tbp, 
+            mapping=aes(x=mean_miles, 
+                        y=deviation, 
+                        colour="dummy",
+                        fill="dummy",
+                        size=trips))
+
+highlight <- tbp %>% filter(deviation > label_cutoff)
+
+p_dist <- p_dist +
+  geom_point() +
+  geom_hline(yintercept=0, colour="darkgrey") +
+  theme(legend.position="none") +
+  labs(caption="Dot size shows the number of trips",
+       x="Average trip distance (miles)",
+       y="Deviation ($/trip)") +
+  geom_text(data=highlight, label=highlight$pickup_community_area, size=4, vjust=2, colour="black") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")
+
+( p_map | p_dist) +
+  # plot_layout(ncol=2) + 
+  plot_annotation(tag_levels = "a")
+```
+
+# Why algorithmic prices matter
 
 While "RSE" may measure the deviation from a time-and-distance model, and although it has accompanied and probably caused an increase in the average fare, RSE is a separate measure to the average best-fit fare. The fare a rider can expect to pay is, roughly, the average fare "plus or minus" the RSE. It is tempting to wonder: if the RSE is independent of the average, and if some riders pay less than the average even as others pay more, does the variability of pricing as measured by the RSE, actually matter in and of itself? The answer is "yes".
 
-In a competitive market, companies have to lower their prices to meet those of the competition. The ideal result is that prices are lowered so that supply meets demand. Some consumers would be prepared to pay more than this price (the Demand line) and so there is a large "consumer surplus" -- the area in red in @fig-supply-demand (A).
+In a competitive market, companies have to lower their prices to meet those of the competition. The ideal result is that prices are lowered so that supply meets demand. Some consumers would be prepared to pay more than this price (the Demand line) and so there is a large "consumer surplus" -- the area in red in @fig-supply-demand (a).
 
-In the absence of competition, a monopolist can set its own prices. The result is shown in @fig-supply-demand (B). A monopolist may lose a few customers who are not able or prepared to pay the higher price, but the extra money it gains from the higher prices the remaining consumers pay makes it worth the monopolist's while. Meanwhile, the consumer surplus shrinks. Competition law exists, in part, to protect consumers from this kind of monopoly behaviour.
+In the absence of competition, a monopolist can set its own prices. The result is shown in @fig-supply-demand (b). A monopolist may lose a few customers who are not able or prepared to pay the higher price, but the extra money it gains from the higher prices the remaining consumers pay makes it worth the monopolist's while. Meanwhile, the consumer surplus shrinks. Competition law exists, in part, to protect consumers from this kind of monopoly behaviour.
 
-Uber and other platform companies look to go beyond what normal monopolists can do, as shown in @fig-supply-demand-2 (B). 
+Uber and other platform companies look to go beyond what normal monopolists can do, as shown in @fig-supply-demand-2 (b). 
 By fine-tuning prices for each trip, they can make the most out of each transaction: set a high price for those trips where the rider is prepared to pay, and set a lower price to keep those who would not be prepared to pay the higher average fare. By simply presenting the price "upfront", consumers do not know where they have been placed on this range.
 
 ```{r}
