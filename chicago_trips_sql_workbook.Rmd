@@ -23,7 +23,7 @@ No text needed here.
 
 ```{r setup, include=FALSE, echo=FALSE}
 # install.packages("librarian")
-librarian::shelf(tidyverse, knitr, reshape2, ggtext, 
+librarian::shelf(tidyverse, knitr, reshape2, ggtext, devtools,
                  jsonlite, stringr, lubridate, scales, paletteer,
                  ggthemes, RColorBrewer, viridis, vroom,
                  janitor, RPostgres, pals, ggh4x, sf
@@ -521,7 +521,8 @@ p +
         legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2")
 ```
-# Analysis: model RSE and intercept etc
+
+# Analysis: model RSE and coefficients
 
 ```{r ca_model_plot, echo=FALSE}
 pickup_community_area_list = list(0)
@@ -920,6 +921,7 @@ p +
   # scale_colour_tableau(palette = "Hue Circle")
   scale_colour_manual(values=as.vector(pals::alphabet()))
 ```
+
 # Distribution of fares
 
 ```{r fig-fare-variation, echo=FALSE}
@@ -1122,18 +1124,17 @@ dbClearResult(rs)
 tbp <- tb %>% 
   filter(year==2024, month==8) %>% 
   mutate(deviation_scale = deviation * as.numeric(trips)) %>%
-  pivot_longer((cols=c("deviation", "mean_miles"), 
-                names_to="category", values_to="value")))
+  pivot_longer(cols=c( "mean_miles", "deviation"), 
+                names_to="category", values_to="value")
 
 p <- ggplot(data=tbp, 
             mapping=aes(x=pickup_community_area, 
                         y=value, 
-                        colour=name,
-                        fill=name))
+                        colour=category,
+                        fill=category))
 
 p +
-  geom_line() +
-  #geom_col(position="dodge") +
+  geom_col(position="identity", alpha=0.3) +
   # theme(legend.position="none") +
   # theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2") +
@@ -1143,12 +1144,12 @@ p +
 ##  Community Area Scatter Plot
 
 ```{r deviation-more, echo=FALSE}
+# continuation
 
 tbp <- tb %>% 
-  filter(year==2024, month==8) %>% 
+  filter(year==2024, month==6) %>% 
   mutate(deviation_scale = deviation * as.numeric(trips))
 
-# continuation
 p <- ggplot(data=tbp, 
             mapping=aes(x=mean_miles, 
                         y=deviation, 
@@ -1156,7 +1157,7 @@ p <- ggplot(data=tbp,
                         fill="dummy",
                         size=trips))
 
-highlight <- tbp %>% filter(pickup_community_area %in% c(56, 76))
+highlight <- tbp %>% filter(deviation > 1.5)
 
 p +
   geom_point() +
@@ -1166,7 +1167,7 @@ p +
        subtitle="Dot size shows the number of trips from the community area",
        x="Average trip distance (miles)",
        y="Deviation from time-and-distance model ($/trip)") +
-  geom_text(data=highlight, label="Airport", size=4, vjust=2, colour="black") +
+  geom_text(data=highlight, label=highlight$pickup_community_area, size=4, vjust=2, colour="black") +
   # theme(legend.title=element_blank()) +
   scale_colour_brewer(palette = "Dark2") +
   scale_fill_brewer(palette = "Dark2")
@@ -1206,28 +1207,96 @@ p +
 ```{r ca-map, echo=FALSE}
 # From https://thisisdaryn.netlify.app/post/intro-to-making-maps-with-ggplot2/#using-read_sf-to-read-in-a-geojson-file
 
-
 tbp <- tb %>% 
   filter(year==2024, month==6) %>%
-  mutate(this_date=as.Date(sprintf("%s-%s-01", year, month))) %>%
-  mutate(area_num_1 = as.character(pickup_community_area),
-         map_label=ifelse(deviation > 1.5, area_num_1, ""))
+  mutate(this_date=as.Date(sprintf("%s-%s-01", year, month)),
+         area_num_1 = as.character(pickup_community_area)) %>%
+  mutate(map_label=ifelse(deviation > 1.5, area_num_1, "")) 
 
 
 map <- read_sf("https://raw.githubusercontent.com/thisisdaryn/data/master/geo/chicago/Comm_Areas.geojson") 
 
-trips_map <- left_join(map, tbp, by = "area_num_1")
+trips_map <- left_join(map, tbp, by = "area_num_1") %>%
+  pivot_longer(c(mean_fare, mean_miles, mean_minutes, deviation), 
+               names_to="category", 
+               values_to="measure") %>%
+  filter(category == "deviation")
+
 
 p <- ggplot(data=trips_map, 
-            mapping=aes(fill=deviation)) 
+            mapping=aes(fill=measure)) 
 
 p + 
+  # facet_wrap(vars(category)) +
   geom_sf() +
   geom_sf_text(aes(label = map_label)) +
-  labs(title="Average deviation from best fit time-and-distance fare",
+  labs(title="Average deviation from best fit time & distance fare",
        subtitle="Trips categorized by pickup community area",
-       fill="Average deviation\n($/trip)") +
+       fill="Deviation\n($/trip)") +
   # scale_fill_continuous(low = "ivory", high = "#d95f02")
   scale_fill_continuous(low = "ivory", high = "#1b9e77") +
-  theme_map()
+  theme_map() # +
+  # theme(legend.position="right")
 ```
+
+# Hour-of-day dependence (not much here)
+
+Not getting much from here, to be honest.
+
+```{r hour-of-day, echo=FALSE}
+this_year = 2024
+this_month = 2
+
+sql <- {"
+select F.year, F.month,
+  -- F.pickup_community_area, 
+  -- CA.name as ca_name,
+  date_part('hour', trip_start_timestamp::timestamp) as hour_of_day,
+  cast(count(*) as decimal) trips, 
+  avg(fare) as mean_fare, 
+  avg(trip_miles) as mean_miles, 
+  avg(trip_minutes) as mean_minutes, 
+  avg(fare - (coeff_per_mile * trip_miles + coeff_per_minute * trip_minutes + coeff_intercept)) as deviation
+from ridehail.trip_fares F 
+inner join ridehail.community_area CA
+	on F.pickup_community_area = CA.id
+inner join ridehail.trip_model M
+	on F.year = M.year and F.month = M.month
+	where M.model_type = 'lm' and M.pickup_community_area = 0
+  and F.year = $1 
+  and F.month = $2
+group by F.year, F.month, -- F.pickup_community_area, CA.name, 
+date_part('hour', trip_start_timestamp::timestamp)
+-- having count(*) > 100
+order by hour_of_day;"}
+
+rs <- dbSendQuery(con,sql)
+dbBind(rs, list(this_year, this_month))
+tb <- as_tibble(dbFetch(rs, n=-1)) 
+dbClearResult(rs)
+
+this_community_area = 0
+
+tbp <- tb %>% 
+  mutate(deviation_scale = deviation * trips) %>%
+  # filter(pickup_community_area == this_community_area) %>%
+  pivot_longer(cols=c("trips",  "deviation", "deviation_scale", "mean_fare", "mean_miles", "mean_minutes"), 
+                names_to="category", values_to="value")
+
+p <- ggplot(data=tbp, 
+            mapping=aes(x=hour_of_day, 
+                        y=value, 
+                        colour=category,
+                        fill=category))
+
+p +
+  facet_wrap(vars(category), scales="free") +
+  geom_col(position="identity", alpha=0.3) +
+  # labs(title=sprintf("Time of day dependence for CA %s (%s)", this_community_area, tbp$ca_name)) +
+  theme(legend.position="none") +
+  # theme(legend.title=element_blank()) +
+  scale_colour_brewer(palette = "Dark2") +
+  scale_fill_brewer(palette = "Dark2")
+```
+
+

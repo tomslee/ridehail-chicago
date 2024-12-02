@@ -69,7 +69,7 @@ tb <- tibble(
 )
 
 for (year in c(2024)) {
-for (month in c(07)){
+for (month in c(09)){
  #for (year in c(2023)) {
 #  for (month in c(10:11)){
     first_seven_dates <- seq(ymd(sprintf("%s-%s-01", year, month)),ymd(sprintf("%s-%s-07", year, month)),by="1 day")
@@ -159,6 +159,32 @@ p +
        y="Daily trips") +
   scale_colour_brewer(palette="Dark2")
 ```
+# Percent change in trips, year over year
+
+```{r plot-yoy-trips, echo=FALSE}
+tb <- trips %>%
+  arrange(year, month) %>%
+  filter(category=="trip_count") %>%
+  mutate(last_year = lag(measure, n=12),
+         yoy=100* (measure - last_year)/last_year) %>%
+  filter(year >= 2022)
+
+p <- ggplot(data=tb,
+            mapping=aes(x=date, y=yoy, colour=category, fill=category))
+
+p +
+  geom_col(colour="white") +
+  # geom_point(shape=21, fill="white", colour="steelblue", size=3, stroke=2) +
+  theme(legend.position="none") +
+  scale_y_continuous(limits=c(0, NA), labels=label_number(scale_cut=cut_short_scale())) +
+  labs(title="Uber Chicago Trip Growth (%, YoY)", 
+       subtitle="Each column represents the year-over-year growth in trips on the first Thursday of the month",
+       x="Date",
+       y="Year-over-year growth in number of trips (%)") +
+  scale_colour_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
+```
+
 
 # Trip durations
 

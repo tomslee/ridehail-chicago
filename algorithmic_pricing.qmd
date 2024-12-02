@@ -8,15 +8,13 @@ author:
 date: last-modified
 date-format: long
 description: >
-  Uber just introduced "upfront pricing for drivers" in Canada, but
-  "black box pricing" would be a better term.
+  Deconstructing Uber's algorithmic "upfront pricing" with data from Chicago.
 abstract: >
   Uber claims that "upfront pricing" is about transparency and peace of 
-  mind, but data from Chicago shows that Uber used "upfront pricing 
-  for riders" to increase fares and to take more from each transaction by 
-  fine-tuning prices for each trip. Now the other shoe has dropped, as
-  Uber has introduced "upfront pricing for drivers" in Canada, and there 
-  can be little doubt it will be used to drive down driver earnings. 
+  mind. Data from Chicago paints a different picture: it shows that Uber 
+  used "upfront pricing for riders" to increase fares, to target profitable
+  trips based on location, and to take more from each transaction by 
+  fine-tuning prices for each trip.
 appendix-style: none
 bibliography: references.bib
 toc: true
@@ -44,13 +42,15 @@ format:
     keep-tex: true
     mainfont: "CharterBT-Roman"
     linestretch: 1.1
+    output-file: "algorithmic_pricing"
+    output-ext:  "pdf"
   pdf: 
     documentclass: scrartcl
     papersize: letter
     toc: true
     number-sections: true
     colorlinks: true
-    output-file: "surveillance_pricing"
+    output-file: "algorithmic_pricing_draft"
     output-ext:  "pdf"
     mainfont: "CharterBT-Roman"
     fontsize: 12pt
@@ -71,6 +71,9 @@ format:
         \addtokomafont{subsection}{\subsectionfont}
         \addtokomafont{subsubsection}{\subsubsectionfont}
         \usepackage{mdframed}
+    revealjs:
+      # logo: whatever.png
+      footer: "Copyright © 2024 RideFair."
 filters:
   - watermark
 watermark:
@@ -473,7 +476,7 @@ label_cutoff = 1.5
 sql <- {"select F.year, F.month,
   F.pickup_community_area, 
   CA.name,
-  count(*) trips, 
+  cast(count(*) as decimal) as trips, 
   avg(fare) as mean_fare, 
   avg(trip_miles) as mean_miles, 
   avg(trip_minutes) as mean_minutes, 
@@ -491,7 +494,7 @@ order by deviation desc;"}
 
 rs <- dbSendQuery(con,sql)
 dbBind(rs, list(this_year, this_month))
-tb <- as_tibble(dbFetch(rs, n=-1)) 
+tb <- as_tibble(dbFetch(rs, n=-1))
 dbClearResult(rs)
 
 tbp <- tb %>% 
@@ -541,8 +544,8 @@ p_dist <- p_dist +
        y="Deviation ($/trip)") +
   geom_text(data=highlight, label=highlight$pickup_community_area, size=4, vjust=2, colour="black") +
   # theme(legend.title=element_blank()) +
-  scale_colour_brewer(palette = "Dark2") +
-  scale_fill_brewer(palette = "Dark2")
+  scale_colour_brewer(palette="Dark2") +
+  scale_fill_brewer(palette="Dark2")
 
 ( p_map | p_dist) +
   # plot_layout(ncol=2) + 
